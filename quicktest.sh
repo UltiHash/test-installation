@@ -476,78 +476,53 @@ function wipe_cluster() {
 }
 
 ###############################################################################
-# 6. MAIN LOOP
+# 6. SINGLE RUN (no repeated prompt)
 ###############################################################################
-function main_loop() {
-  while true; do
-    echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
-    IFS= read -r RAW_PATH < /dev/tty
+echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
+IFS= read -r RAW_PATH < /dev/tty
 
-    RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
-    RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
+RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
+RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
-    if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
-      echo "❌ You must provide a valid path. Please try again."
-      continue
-    fi
+if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
+  echo "❌ You must provide a valid path. Exiting."
+  docker compose down -v >/dev/null 2>&1 || true
+  exit 1
+fi
 
-    echo ""
+# 1. Store data
+echo ""
+WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
+echo ""
 
-    WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
-    echo ""
+# 2. Read data
+READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
+echo ""
 
-    READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
-    echo ""
+# 3. Dedup Info
+DE_INFO="$(dedup_info)"
+ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
+EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
+SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
+PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
-    DE_INFO="$(dedup_info)"
-    ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
-    EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
-    SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
-    PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
+echo "➡️  WRITE THROUGHPUT: $WRITE_SPEED MB/s"
+echo "⬅️  READ THROUGHPUT:  $READ_SPEED MB/s"
+echo ""
+echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
+echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
+echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
+echo ""
 
-    echo "➡️  WRITE THROUGHPUT: $WRITE_SPEED MB/s"
-    echo "⬅️  READ THROUGHPUT:  $READ_SPEED MB/s"
-    echo ""
-    echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
-    echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
-    echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
+# 4. Data read confirmation & user notice
+echo "The data has been read from the UltiHash cluster, and placed in ${RAW_PATH}-retrieved."
+echo "You can go and examine it to check data integrity. (Don't forget to delete the replica to free up space.)"
+echo ""
 
-    echo ""
-    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
-    IFS= read -r ANSWER < /dev/tty
+# 5. Prompt to claim free license, then shut down
+echo -ne "Press Enter to claim your free 10TB license at https://ultihash.io/sign-up "
+read -r -t 60 < /dev/tty || true
 
-    if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
-      wipe_cluster
-      echo ""
-      echo "Preparing the cluster..."
-      docker compose up -d >/dev/null 2>&1 || true
-      sleep 5
-      echo ""
-    else
-      echo ""
-      echo "Shutting down UltiHash..."
-      docker compose down -v >/dev/null 2>&1 || true
-
-      # Show free 10TB license prompt + auto-open here
-      echo ""
-      echo "To unlock your free 10TB license for production use, head to https://ultihash.io/sign-up"
-
-      # Attempt to open sign-up link (silently)
-      if [[ "$OS_TYPE" == "Darwin"* ]]; then
-        if command -v open &>/dev/null; then
-          open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
-        fi
-      else
-        if command -v xdg-open &>/dev/null; then
-          xdg-open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
-        fi
-      fi
-
-      echo ""
-      echo "🌛 UltiHash is offline."
-      break
-    fi
-  done
-}
-
-main_loop
+wipe_cluster
+echo "Wiping data and shutting down UltiHash..."
+echo "🌛 UltiHash is offline."
