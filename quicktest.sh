@@ -264,7 +264,7 @@ docker compose up -d >/dev/null 2>&1 || true
 sleep 5
 
 ###############################################################################
-# 4. WELCOME + auto-open test-data (silenced)
+# 4. WELCOME
 ###############################################################################
 cat <<WELCOME
 
@@ -272,19 +272,9 @@ cat <<WELCOME
 Welcome to the UltiHash test installation! Here you can store real data
 to see UltiHash's deduplication and speed. Different datasets will have different results.
 
-Head to https://ultihash.io/test-data to download sample datasets, or store your own.
+(For sample datasets, visit https://ultihash.io/test-data in your browser.)
 
 WELCOME
-
-if [[ "$OS_TYPE" == "Darwin"* ]]; then
-  if command -v open &>/dev/null; then
-    open "https://ultihash.io/test-data" >/dev/null 2>&1 || true
-  fi
-else
-  if command -v xdg-open &>/dev/null; then
-    xdg-open "https://ultihash.io/test-data" >/dev/null 2>&1 || true
-  fi
-fi
 
 ###############################################################################
 # 5. TQDM STORING & READING (no colour => default white)
@@ -519,13 +509,10 @@ echo "The data has been read from the UltiHash cluster, and placed in ${RAW_PATH
 echo "You can go and examine it to check data integrity. (Don't forget to delete the replica to free up space.)"
 echo ""
 
-# 5. Prompt to claim free license (or timeout in 60s). If user presses enter, open link; otherwise skip.
+# 5. Prompt: if user presses Enter (within 60s), open link. Otherwise skip opening.
 echo -ne "Press Enter to claim your free 10TB license at https://ultihash.io/sign-up "
-read -r -t 60
-READ_STATUS=$?
-
-if [[ $READ_STATUS -eq 0 ]]; then
-  # User pressed Enter in time
+if read -r -t 60 userInput; then
+  # The user pressed Enter (within 60 seconds)
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     if command -v open &>/dev/null; then
       open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
