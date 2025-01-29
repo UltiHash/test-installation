@@ -2,20 +2,10 @@
 set -e
 
 ###############################################################################
-# 0. WINDOWS/GIT BASH WARNING
+# 0. MACOS DOCKER CHECK (IF APPLICABLE)
 ###############################################################################
-# If user is on Windows, they must run in Git Bash or WSL, not in normal PowerShell.
-
 OS_TYPE="$(uname -s)"
 
-if [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* ]]; then
-    echo "⚠️ On Windows, please run this script from Git Bash or WSL (not PowerShell/CMD)."
-    sleep 2
-fi
-
-###############################################################################
-# 0.1 MACOS DOCKER CHECK (IF APPLICABLE)
-###############################################################################
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
     # 1) Docker installed?
     if ! command -v docker &>/dev/null; then
@@ -51,7 +41,7 @@ BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
-function trim_trailing_spaces() {
+trim_trailing_spaces() {
   echo -e "$1" | sed -E 's/[[:space:]]+$//'
 }
 
@@ -70,11 +60,13 @@ function install_aws_cli_quiet() {
   if ! command -v aws &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
+        # macOS with brew
         if command -v brew &>/dev/null; then
           brew install awscli >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
       Linux)
+        # Ubuntu/Debian etc. with apt-get
         if command -v apt-get &>/dev/null; then
           sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
           sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
@@ -82,11 +74,6 @@ function install_aws_cli_quiet() {
           unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
           sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
           rm -rf awscliv2.zip aws/
-        fi
-        ;;
-      MINGW*|MSYS*|CYGWIN*)
-        if command -v choco &>/dev/null; then
-          choco install awscli -y >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
     esac
@@ -107,11 +94,6 @@ function install_python_quiet() {
           sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
-      MINGW*|MSYS*|CYGWIN*)
-        if command -v choco &>/dev/null; then
-          choco install python -y >>"$LOG_FILE" 2>&1 || true
-        fi
-        ;;
     esac
   fi
 }
@@ -129,9 +111,11 @@ function install_tqdm_quiet() {
 }
 
 function install_docker_quiet() {
+  # On mac we skip auto-install Docker Desktop
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
+
   if ! command -v docker &>/dev/null; then
     case "$OS_TYPE" in
       Linux)
@@ -149,11 +133,6 @@ function install_docker_quiet() {
           sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >>"$LOG_FILE" 2>&1
           sudo systemctl start docker || true
           sudo usermod -aG docker "$USER" || true
-        fi
-        ;;
-      MINGW*|MSYS*|CYGWIN*)
-        if command -v choco &>/dev/null; then
-          choco install docker-desktop -y >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
     esac
@@ -298,7 +277,7 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING (COLOR="#5bdbb4" = UltiHash Teal)
+# 5. TQDM STORING & READING (COLOUR="#5bdbb4" = UltiHash Teal)
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -310,7 +289,6 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-
 dp="$DATAPATH".rstrip()
 pp=pathlib.Path(dp)
 
@@ -524,6 +502,19 @@ function main_loop() {
     echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
     echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
+
+    # (A) Show "To unlock your free 10TB..." message & auto-open
+    echo ""
+    echo "To unlock your free 10TB license for production use, head to https://ultihash.io/sign-up"
+    if [[ "$OS_TYPE" == "Darwin"* ]]; then
+      if command -v open &>/dev/null; then
+        NO_AT_BRIDGE=1 open "https://ultihash.io/sign-up" || true
+      fi
+    else
+      if command -v xdg-open &>/dev/null; then
+        NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/sign-up" || true
+      fi
+    fi
 
     echo ""
     echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
