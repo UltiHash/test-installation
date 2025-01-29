@@ -277,8 +277,10 @@ If you'd like sample datasets, head to https://ultihash.io/test-data in your own
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING
+# 5. PYTHON FUNCTIONS
 ###############################################################################
+
+# Store data in test-bucket, measure total bytes, compute + print MB/s
 function store_data() {
   local DATAPATH="$1"
   python3 - <<EOF
@@ -291,9 +293,10 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
 dp="$DATAPATH".rstrip()
-pp=pathlib.Path(dp)
+pp = pathlib.Path(dp)
 
 s3 = boto3.client("s3", endpoint_url=endpoint)
+
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -302,25 +305,24 @@ except:
 def gather_files(basep):
     if basep.is_file():
         return [(basep, basep.parent)], basep.stat().st_size
-    st=0
-    fl=[]
-    for (root,dirs,files) in os.walk(basep):
+    st = 0
+    fl = []
+    for (root, dirs, files) in os.walk(basep):
         for f in files:
-            fu=pathlib.Path(root)/f
-            st+=fu.stat().st_size
+            fu = pathlib.Path(root)/f
+            st += fu.stat().st_size
             fl.append((fu, basep))
     return fl, st
 
 files_list, total_sz = gather_files(pp)
 start = time.time()
 
-print("")
 progress = tqdm(
     total=total_sz,
     desc="Writing data",
     unit="B",
     unit_scale=True,
-    unit_divisor=1000
+    unit_divisor=1024
 )
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -332,15 +334,23 @@ def do_store(fp, base):
     s3.upload_file(str(fp), bucket, k, Callback=cb)
 
 futs = []
-for (fp,bs) in files_list:
+for (fp, bs) in files_list:
     futs.append(pool.submit(do_store, fp, bs))
 for ft in futs:
     ft.result()
 
 progress.close()
+elapsed = time.time() - start
+mb = total_sz / (1024 * 1024)
+speed = 0
+if elapsed > 0:
+    speed = mb / elapsed
+
+print(f"{speed:.2f}")
 EOF
 }
 
+# Read data from test-bucket, measure total bytes, compute + print MB/s
 function read_data() {
   local DATAPATH="$1"
   python3 - <<EOF
@@ -353,63 +363,88 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
 dp="$DATAPATH".rstrip()
-outp=pathlib.Path(f"{dp}-retrieved")
+outp = pathlib.Path(f"{dp}-retrieved")
 outp.mkdir(parents=True, exist_ok=True)
 
 s3 = boto3.client("s3", endpoint_url=endpoint)
 
-def gather_keys():
-    allk=[]
-    paginator=s3.get_paginator("list_objects_v2")
+def gather_keys_and_size():
+    total_s = 0
+    allk = []
+    paginator = s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket):
-        for obj in page.get("Contents",[]):
+        for obj in page.get("Contents", []):
             allk.append(obj["Key"])
-    return allk
+            total_s += obj["Size"]
+    return allk, total_s
 
-def chunk_download(k):
-    resp = s3.get_object(Bucket=bucket,Key=k)
+keys, total_sz = gather_keys_and_size()
+
+start = time.time()
+
+progress = tqdm(
+    total=total_sz,
+    desc="Reading data",
+    unit="B",
+    unit_scale=True,
+    unit_divisor=1024
+)
+
+def download_object(k):
+    resp = s3.get_object(Bucket=bucket, Key=k)
     body = resp["Body"]
-    lf = outp/bucket/k
+    lf = outp / bucket / k
     lf.parent.mkdir(parents=True, exist_ok=True)
-
     while True:
-        chunk = body.read(128*1024)
+        chunk = body.read(128 * 1024)
         if not chunk:
             break
-        yield (lf, chunk)
+        with open(lf, "ab") as f:
+            f.write(chunk)
+        progress.update(len(chunk))
+        progress.refresh()
 
-keys = gather_keys()
-
-print("")
-progress = tqdm(
-    total=len(keys),
-    desc="Reading data",
-    unit="files",
-    unit_scale=True
-)
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
-
-def do_download(k):
-    for (lf, chk) in chunk_download(k):
-        with open(lf,"ab") as f:
-            f.write(chk)
-    progress.update(1)
-    progress.refresh()
-
-farr=[]
+farr = []
 for kk in keys:
-    farr.append(pool.submit(do_download, kk))
+    farr.append(pool.submit(download_object, kk))
 for ft in farr:
     ft.result()
 
 progress.close()
+elapsed = time.time() - start
+mb = total_sz / (1024 * 1024)
+speed = 0
+if elapsed > 0:
+    speed = mb / elapsed
+
+print(f"{speed:.2f}")
 EOF
 }
 
-# Minimal wipe logic
+# Gather dedup info from local cluster metrics
+function dedup_info() {
+  python3 - <<EOF
+import sys, json
+import boto3
+
+s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
+resp = s3.get_object(Bucket="ultihash", Key="v1/metrics/cluster")
+data = json.loads(resp["Body"].read())
+
+orig = data.get("raw_data_size", 0)
+eff  = data.get("effective_data_size", 0)
+sav  = orig - eff
+pct  = 0
+if orig > 0:
+    pct = (sav / orig) * 100
+print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
+EOF
+}
+
+# Wipe cluster (docker + local test-bucket)
 function wipe_cluster() {
   docker compose down -v >/dev/null 2>&1 || true
-  # Also remove the local S3 bucket if needed:
   python3 - <<EOF
 import sys, boto3
 
@@ -419,7 +454,7 @@ s3 = boto3.client("s3", endpoint_url=endpoint)
 try:
     content = s3.list_objects_v2(Bucket=b).get("Contents",[])
     for obj in content:
-        s3.delete_object(Bucket=b,Key=obj["Key"])
+        s3.delete_object(Bucket=b, Key=obj["Key"])
     s3.delete_bucket(Bucket=b)
 except:
     pass
@@ -441,16 +476,23 @@ if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
   exit 1
 fi
 
-# 1. Store data (no actual throughput displayed)
-store_data "$RAW_PATH"
+# 1. Store data => capture actual write speed
+WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 
-# 2. Read data (no actual throughput displayed)
-read_data "$RAW_PATH"
+# 2. Read data => capture actual read speed
+READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
 
-# 3. Shut down & wipe
+# 3. Gather dedup info => parse out orig/eff/saved/pct
+DE_INFO="$(dedup_info)"
+ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
+EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
+SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
+PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
+
+# 4. Shut down & wipe
 wipe_cluster
 
-# 4. Print EXACT lines you requested (static numbers & messages)
+# 5. Print final lines with actual stats
 echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
