@@ -264,7 +264,7 @@ docker compose up -d >/dev/null 2>&1 || true
 sleep 5
 
 ###############################################################################
-# 4. WELCOME + auto-open test-data
+# 4. WELCOME + auto-open test-data (silenced)
 ###############################################################################
 cat <<WELCOME
 
@@ -276,19 +276,18 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 
 WELCOME
 
-# Attempt to open test-data link in default browser
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
   if command -v open &>/dev/null; then
-    open "https://ultihash.io/test-data" || true
+    open "https://ultihash.io/test-data" >/dev/null 2>&1 || true
   fi
 else
   if command -v xdg-open &>/dev/null; then
-    xdg-open "https://ultihash.io/test-data" || true
+    xdg-open "https://ultihash.io/test-data" >/dev/null 2>&1 || true
   fi
 fi
 
 ###############################################################################
-# 5. TQDM STORING & READING (no colour param => white bars)
+# 5. TQDM STORING & READING (no colour => default white)
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -304,7 +303,7 @@ bucket="test-bucket"
 dp="$DATAPATH".rstrip()
 pp=pathlib.Path(dp)
 
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3 = boto3.client("s3", endpoint_url=endpoint)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -322,8 +321,8 @@ def gather_files(basep):
             fl.append((fu, basep))
     return fl, st
 
-files_list, total_sz=gather_files(pp)
-start=time.time()
+files_list, total_sz = gather_files(pp)
+start = time.time()
 
 print("")
 progress = tqdm(
@@ -339,19 +338,18 @@ def do_store(fp, base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    k=str(fp.relative_to(base))
+    k = str(fp.relative_to(base))
     s3.upload_file(str(fp), bucket, k, Callback=cb)
 
-futs=[]
+futs = []
 for (fp,bs) in files_list:
     futs.append(pool.submit(do_store, fp, bs))
-
 for ft in futs:
     ft.result()
 
 progress.close()
-elapsed=time.time() - start
-mb=total_sz/(1024*1024)
+elapsed = time.time() - start
+mb = total_sz / (1024*1024)
 speed=0
 if elapsed>0:
     speed=mb/elapsed
@@ -375,31 +373,32 @@ dp="$DATAPATH".rstrip()
 outp=pathlib.Path(f"{dp}-retrieved")
 outp.mkdir(parents=True, exist_ok=True)
 
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3 = boto3.client("s3", endpoint_url=endpoint)
 
 def gather_keys():
     total_s=0
     allk=[]
-    pg=s3.get_paginator("list_objects_v2")
-    for page in pg.paginate(Bucket=bucket):
+    paginator=s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket):
         for obj in page.get("Contents",[]):
             allk.append(obj["Key"])
-            total_s+=obj["Size"]
-    return allk,total_s
+            total_s += obj["Size"]
+    return allk, total_s
 
 def chunk_download(k):
-    resp=s3.get_object(Bucket=bucket,Key=k)
-    body=resp["Body"]
-    lf=outp/bucket/k
+    resp = s3.get_object(Bucket=bucket,Key=k)
+    body = resp["Body"]
+    lf = outp/bucket/k
     lf.parent.mkdir(parents=True, exist_ok=True)
+
     while True:
-        chunk=body.read(128*1024)
+        chunk = body.read(128*1024)
         if not chunk:
             break
         yield (lf, chunk)
 
-keys, total_sz=gather_keys()
-start=time.time()
+keys, total_sz = gather_keys()
+start = time.time()
 
 print("")
 progress = tqdm(
@@ -412,7 +411,7 @@ progress = tqdm(
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_download(k):
-    for (lf,chk) in chunk_download(k):
+    for (lf, chk) in chunk_download(k):
         with open(lf,"ab") as f:
             f.write(chk)
         progress.update(len(chk))
@@ -421,13 +420,12 @@ def do_download(k):
 farr=[]
 for kk in keys:
     farr.append(pool.submit(do_download, kk))
-
 for ft in farr:
     ft.result()
 
 progress.close()
-elapsed=time.time() - start
-mb=total_sz/(1024*1024)
+elapsed = time.time()-start
+mb = total_sz / (1024*1024)
 speed=0
 if elapsed>0:
     speed=mb/elapsed
@@ -441,13 +439,13 @@ function dedup_info() {
 import sys, json
 import boto3
 
-s3=boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
-resp=s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
-data=json.loads(resp["Body"].read())
+s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
+resp = s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
+data = json.loads(resp["Body"].read())
 
-orig=data.get("raw_data_size",0)
-eff=data.get("effective_data_size",0)
-sav=orig-eff
+orig = data.get("raw_data_size",0)
+eff  = data.get("effective_data_size",0)
+sav  = orig - eff
 pct=0
 if orig>0:
     pct=(sav/orig)*100
@@ -457,13 +455,14 @@ EOF
 
 function wipe_bucket() {
   python3 - <<EOF
-import sys,boto3
+import sys, boto3
+
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3 = boto3.client("s3", endpoint_url=endpoint)
 try:
-    stuff=s3.list_objects_v2(Bucket=b).get("Contents",[])
-    for obj in stuff:
+    content = s3.list_objects_v2(Bucket=b).get("Contents",[])
+    for obj in content:
         s3.delete_object(Bucket=b,Key=obj["Key"])
     s3.delete_bucket(Bucket=b)
 except:
@@ -532,13 +531,15 @@ function main_loop() {
       # Show free 10TB license prompt + auto-open here
       echo ""
       echo "To unlock your free 10TB license for production use, head to https://ultihash.io/sign-up"
+
+      # Attempt to open sign-up link (silently)
       if [[ "$OS_TYPE" == "Darwin"* ]]; then
         if command -v open &>/dev/null; then
-          open "https://ultihash.io/sign-up" || true
+          open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
         fi
       else
         if command -v xdg-open &>/dev/null; then
-          xdg-open "https://ultihash.io/sign-up" || true
+          xdg-open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
         fi
       fi
 
