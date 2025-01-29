@@ -10,14 +10,13 @@ UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsR
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & UTILITIES
+# 1. COLORS & DIVIDER
 ###############################################################################
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
 function print_divider() {
   echo ""
-  # Single continuous box-drawing line
   echo -e "${BOLD_TEAL}────────────────────────────────────────────────────${RESET}"
   echo ""
 }
@@ -25,13 +24,13 @@ function print_divider() {
 echo ""  # extra blank line
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES
+# 2. INSTALL PREREQUISITES
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Step A: Docker + AWS CLI + Python
 sudo apt-get update -y -qq > /dev/null 2>&1
 
+# Docker
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -52,6 +51,7 @@ if ! sudo systemctl is-active --quiet docker; then
 fi
 echo "✅ Docker installed."
 
+# AWS CLI
 if ! command -v aws &>/dev/null; then
   sudo apt-get install -y -qq unzip > /dev/null 2>&1
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
@@ -61,6 +61,7 @@ if ! command -v aws &>/dev/null; then
 fi
 echo "✅ AWS CLI installed."
 
+# Python + boto3 + tqdm
 if ! command -v python3 &>/dev/null; then
   sudo apt-get install -y -qq python3 > /dev/null 2>&1
 fi
@@ -193,12 +194,11 @@ if command -v xdg-open &> /dev/null; then
 fi
 
 ###############################################################################
-# 5. WRITE (STORE) & THEN READ (DOWNLOAD)
+# 5. store_data (write) + read_data (download) + dedup_info
 ###############################################################################
-store_data() {
+function store_data() {
   local DATAPATH="$1"
-
-  # We'll run an inline Python snippet to do the storing
+  # We'll measure and produce a single float for the write speed
   python3 - <<EOF
 import sys, os, pathlib, json, time
 import concurrent.futures
@@ -236,7 +236,7 @@ progress = tqdm(
     total=size_total,
     unit="B",
     unit_scale=True,
-    desc="➡️ Writing data",
+    desc="Writing data",
     unit_divisor=1000,
     colour="#5bdbb4"
 )
@@ -258,25 +258,20 @@ progress.close()
 elapsed = time.time() - start_time
 
 mb=size_total/(1024*1024)
-write_speed=0
+write_speed = 0
 if elapsed>0:
-    write_speed=mb/elapsed
+    write_speed = mb/elapsed
 
-print("")
-echo_write = f"➡️ WRITE SPEED: {write_speed:.2f} MB/s"
-print(echo_write)
+print(f"{write_speed:.2f}")  # print numeric speed to stdout
 EOF
 }
 
-read_data() {
+function read_data() {
   local DATAPATH="$1"
-
-  # We'll append "-retrieved" for the output folder
   local OUTPUT_DIR="${DATAPATH}-retrieved"
 
-  # We'll run the inline Python snippet for reading. We'll log errors to uh-download-errors.log
-  python3 - <<EOF 2>>uh-download-errors.log
-import sys,os,pathlib,json,time
+  python3 - <<EOF
+import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
@@ -284,35 +279,37 @@ from tqdm import tqdm
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
-dp="$DATAPATH".strip()
-out_dir="$OUTPUT_DIR".strip()
-out_path=pathlib.Path(out_dir)
-
-if not out_path.exists():
-    out_path.mkdir(parents=True, exist_ok=True)
+data_path_str="$DATAPATH".strip()
+out_dir_str ="$OUTPUT_DIR".strip()
+out_dir=pathlib.Path(out_dir_str)
+if not out_dir.exists():
+    out_dir.mkdir(parents=True, exist_ok=True)
 
 s3=boto3.client("s3", endpoint_url=endpoint)
 
-def list_objects(buck):
+def list_objs():
     paginator=s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=buck):
+    for page in paginator.paginate(Bucket=bucket):
         for obj in page.get('Contents',[]):
-            yield obj
+            yield obj['Key'], obj['Size']
 
-def do_download(bucket,key):
-    resp=s3.get_object(Bucket=bucket,Key=key)
-    body=resp["Body"].read()
-    return key,body
+# We'll do chunk-based reading to show a bar
+def chunked_download(key):
+    resp=s3.get_object(Bucket=bucket, Key=key)
+    body=resp["Body"]
+    localfile=out_dir/bucket/key
+    localfile.parent.mkdir(parents=True, exist_ok=True)
 
-def gather_keys(buck):
-    allkeys=[]
-    total_size=0
-    for obj in list_objects(buck):
-        allkeys.append(obj['Key'])
-        total_size += obj['Size']
-    return allkeys,total_size
+    with open(localfile,'wb') as f:
+        while True:
+            chunk=body.read(1024*128)  # 128KB chunk
+            if not chunk:
+                break
+            f.write(chunk)
+            yield len(chunk)
 
-keys, total_size = gather_keys(bucket)
+all_keys=list(list_objs())
+total_size=sum(sz for (_,sz) in all_keys)
 start=time.time()
 
 print("")
@@ -320,23 +317,19 @@ progress = tqdm(
     total=total_size,
     unit="B",
     unit_scale=True,
-    desc="⬅️ Reading data",
+    desc="Reading data",
     unit_divisor=1000,
     colour="#5bdbb4"
 )
 
-def download_one(k):
-    k,keybytes = do_download(bucket,k)
-    progress.update(len(keybytes))
-    localfile=out_path/bucket/k
-    localfile.parent.mkdir(parents=True, exist_ok=True)
-    with open(localfile,'wb') as f:
-        f.write(keybytes)
+def do_download(k,sz):
+    for chunk_sz in chunked_download(k):
+        progress.update(chunk_sz)
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 futs=[]
-for k in keys:
-    futs.append(pool.submit(download_one,k))
+for (k,sz) in all_keys:
+    futs.append(pool.submit(do_download,k,sz))
 for f in futs:
     f.result()
 progress.close()
@@ -347,60 +340,45 @@ read_speed=0
 if elapsed>0:
     read_speed=mb/elapsed
 
-print("")
-echo_read = f"⬅️ READ SPEED: {read_speed:.2f} MB/s"
-print(echo_read)
+print(f"{read_speed:.2f}")  # numeric read speed
+EOF
+}
 
-# Then final dedup stats
+function dedup_info() {
+  python3 - <<EOF
+import sys, json
+import boto3
+
+s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
 resp=s3.get_object(Bucket='ultihash', Key='v1/metrics/cluster')
 data=json.loads(resp['Body'].read())
 
-orig=data.get('raw_data_size',0)
-eff =data.get('effective_data_size',0)
-saved= orig-data.get('effective_data_size',0)
+orig = data.get('raw_data_size', 0)
+eff  = data.get('effective_data_size', 0)
+
+saved = orig - eff
+pct=0.0
+if orig>0:
+    pct=(saved/orig)*100
 
 orig_gb=orig/1e9
 eff_gb =eff/1e9
 saved_gb=saved/1e9
-pct=0
-if orig>0:
-    pct=(saved/orig)*100
 
-print("")
-print(f"📦 ORIGINAL SIZE: {orig_gb:,.2f} GB")
-print(f"✨ DEDUPLICATED SIZE: {eff_gb:,.2f} GB")
-print(f"✅ SAVED WITH ULTIHASH: {saved_gb:,.2f} GB ({pct:.2f}%)")
+# Print all 4 in a single line so shell can parse
+print(f"{orig_gb:.2f} {eff_gb:.2f} {saved_gb:.2f} {pct:.2f}")
 EOF
 }
 
-wipe_bucket() {
-  python3 - <<EOF
-import sys,boto3
-
-endpoint="http://127.0.0.1:8080"
-bucket="test-bucket"
-s3=boto3.client("s3",endpoint_url=endpoint)
-try:
-    objs=s3.list_objects_v2(Bucket=bucket).get("Contents",[])
-    for o in objs:
-        s3.delete_object(Bucket=bucket,Key=o["Key"])
-    s3.delete_bucket(Bucket=bucket)
-except:
-    pass
-EOF
-}
-
-wipe_cluster() {
-  docker compose down -v > /dev/null 2>&1 || true
-  wipe_bucket
-}
-
-main_loop() {
+###############################################################################
+# 6. MAIN LOOP
+###############################################################################
+function main_loop() {
   while true; do
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} " > /dev/tty
     IFS= read -r DATAPATH < /dev/tty
 
-    # remove single quotes if they wrap entire path
+    # strip single quotes if they wrap entire path
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
     if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
@@ -408,17 +386,33 @@ main_loop() {
       continue
     fi
 
-    # 1) Store (write) data
-    store_data "$DATAPATH"
+    # 1) Write data + measure speed
+    WRITE_SPEED=$(store_data "$DATAPATH")
+    # 2) Read data + measure speed
+    READ_SPEED=$(read_data "$DATAPATH")
+    # 3) Dedup stats
+    DE_INFO=$(dedup_info)
+    ORIG_GB=$(echo "$DE_INFO" | awk '{print $1}')
+    EFF_GB=$(echo "$DE_INFO"  | awk '{print $2}')
+    SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
+    PCT=$(echo "$DE_INFO"     | awk '{print $4}')
 
-    # 2) Read (download) data
-    read_data "$DATAPATH"
+    # Now we show results *after* both progress bars
+    echo ""
+    echo "➡️ WRITE SPEED: $WRITE_SPEED MB/s"
+    echo "⬅️ READ SPEED:  $READ_SPEED MB/s"
+    echo ""
+    echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
+    echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
+    echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
     echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
     IFS= read -r ANSWER < /dev/tty
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
-      wipe_cluster
+      docker compose down -v > /dev/null 2>&1
+      # Wipe bucket
+      wipe_bucket
 
       echo ""
       echo "Preparing the cluster..."
@@ -426,7 +420,6 @@ main_loop() {
       sleep 5
 
       echo ""
-      echo "Paste the path of the directory you want to store:"
     else
       echo ""
       echo "Shutting down UltiHash..."
