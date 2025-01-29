@@ -519,10 +519,25 @@ echo "The data has been read from the UltiHash cluster, and placed in ${RAW_PATH
 echo "You can go and examine it to check data integrity. (Don't forget to delete the replica to free up space.)"
 echo ""
 
-# 5. Prompt to claim free license, then shut down
+# 5. Prompt to claim free license (or timeout in 60s). If user presses enter, open link; otherwise skip.
 echo -ne "Press Enter to claim your free 10TB license at https://ultihash.io/sign-up "
-read -r -t 60 < /dev/tty || true
+read -r -t 60
+READ_STATUS=$?
 
+if [[ $READ_STATUS -eq 0 ]]; then
+  # User pressed Enter in time
+  if [[ "$OS_TYPE" == "Darwin"* ]]; then
+    if command -v open &>/dev/null; then
+      open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
+    fi
+  else
+    if command -v xdg-open &>/dev/null; then
+      xdg-open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
+    fi
+  fi
+fi
+
+echo ""
 wipe_cluster
 echo "Wiping data and shutting down UltiHash..."
 echo "🌛 UltiHash is offline."
