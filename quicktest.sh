@@ -10,7 +10,7 @@ UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsR
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & UTILITIES
+# 1. COLORS & DIVIDER
 ###############################################################################
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
@@ -24,11 +24,11 @@ function print_divider() {
 echo ""  # blank line before everything
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (ORDER: AWS CLI → boto3 → tqdm → Docker)
+# 2. INSTALLING PREREQUISITES (AWS CLI → boto3 → tqdm → Docker)
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update silently
+# Update
 sudo apt-get update -y -qq > /dev/null 2>&1
 
 # 1) AWS CLI
@@ -208,12 +208,13 @@ import concurrent.futures
 import boto3
 from tqdm import tqdm
 
-endpoint = "http://127.0.0.1:8080"
-bucket   = "test-bucket"
-dp = "$DATAPATH".strip()
-data_path = pathlib.Path(dp)
+endpoint="http://127.0.0.1:8080"
+bucket="test-bucket"
 
-s3 = boto3.client("s3", endpoint_url=endpoint)
+dp="$DATAPATH".strip()
+data_path=pathlib.Path(dp)
+
+s3=boto3.client("s3", endpoint_url=endpoint)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -223,49 +224,50 @@ def gather_files(p):
     if p.is_file():
         return [(p, p.parent)], p.stat().st_size
     stotal=0
-    flist=[]
-    for (root, dirs, files) in os.walk(p):
+    fl=[]
+    for root,dirs,files in os.walk(p):
         for f in files:
-            full=pathlib.Path(root)/f
-            stotal += full.stat().st_size
-            flist.append((full,p))
-    return flist, stotal
+            fu=pathlib.Path(root)/f
+            stotal+=fu.stat().st_size
+            fl.append((fu,p))
+    return fl,stotal
 
-files_list, size_total = gather_files(data_path)
-start_time = time.time()
+files, total_size=gather_files(data_path)
+t0=time.time()
 
 print("")
-progress = tqdm(
-    total=size_total,
+progress=tqdm(
+    total=total_size,
+    desc="Writing data",
     unit="B",
     unit_scale=True,
-    desc="Writing data",
-    unit_divisor=1000,
-    colour="#5bdbb4"
+    colour="#5bdbb4",
+    unit_divisor=1000
 )
-pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def store_one(fp, base):
+pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
+def up_one(fp,base):
     def cb(x):
         progress.update(x)
-    key = str(fp.relative_to(base))
-    s3.upload_file(str(fp), bucket, key, Callback=cb)
+        progress.refresh()
+    key=str(fp.relative_to(base))
+    s3.upload_file(str(fp),bucket,key,Callback=cb)
 
-futs=[]
-for (fp,base) in files_list:
-    futs.append(pool.submit(store_one, fp, base))
-for f in futs:
+fs=[]
+for (fp,base) in files:
+    fs.append(pool.submit(up_one,fp,base))
+for f in fs:
     f.result()
 
 progress.close()
-elapsed = time.time() - start_time
-
-mb=size_total/(1024*1024)
-write_speed = 0
+elapsed=time.time()-t0
+mb=total_size/(1024*1024)
+write_sp=0
 if elapsed>0:
-    write_speed=mb/elapsed
+    write_sp=mb/elapsed
 
-print(f"{write_speed:.2f}")
+print(f"{write_sp:.2f}")
 EOF
 }
 
@@ -273,103 +275,100 @@ function read_data() {
   local DATAPATH="$1"
   local OUTPUT_DIR="${DATAPATH}-retrieved"
 
-  python3 - <<EOF 2>/dev/null | tr -d '\r'
-import sys, os, pathlib, time
+  python3 - <<EOF | tr -d '\r'
+import sys,os,pathlib,time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
+import time
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
-data_path_str="$DATAPATH".strip()
-out_dir_str="$OUTPUT_DIR".strip()
-out_dir=pathlib.Path(out_dir_str)
-if not out_dir.exists():
-    out_dir.mkdir(parents=True, exist_ok=True)
+dp="$DATAPATH".strip()
+outdir_str=f"{dp}-retrieved"
+outdir=pathlib.Path(outdir_str)
+outdir.mkdir(parents=True,exist_ok=True)
 
-s3=boto3.client("s3", endpoint_url=endpoint)
-
-def chunked_download(key):
-    resp=s3.get_object(Bucket=bucket, Key=key)
-    body=resp["Body"]
-    localfile=out_dir/bucket/key
-    localfile.parent.mkdir(parents=True, exist_ok=True)
-
-    while True:
-        chunk=body.read(1024*128)
-        if not chunk:
-            break
-        yield chunk,localfile
+s3=boto3.client("s3",endpoint_url=endpoint)
 
 def gather_keys():
-    allk=[]
     total_s=0
-    paginator=s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=bucket):
-        for o in page.get('Contents',[]):
+    allk=[]
+    pag=s3.get_paginator('list_objects_v2')
+    for page in pag.paginate(Bucket=bucket):
+        for o in page.get("Contents",[]):
             allk.append(o['Key'])
             total_s+=o['Size']
     return allk,total_s
 
-all_keys,total_size = gather_keys()
+def chunked_download(k):
+    r=s3.get_object(Bucket=bucket,Key=k)
+    body=r["Body"]
+    loc=outdir/bucket/k
+    loc.parent.mkdir(parents=True,exist_ok=True)
 
-start=time.time()
+    while True:
+        chunk=body.read(128*1024)
+        if not chunk:
+            break
+        yield (loc,chunk)
+
+keys,total_size=gather_keys()
+t0=time.time()
+
 print("")
-progress = tqdm(
+progress=tqdm(
     total=total_size,
+    desc="Reading data",
     unit="B",
     unit_scale=True,
-    desc="Reading data",
-    unit_divisor=1000,
-    colour="#5bdbb4"
+    colour="#5bdbb4",
+    unit_divisor=1000
 )
 
-def download_one(k):
-    for chunk,lf in chunked_download(k):
-        progress.update(len(chunk))
-        with open(lf,'ab') as f:
+def dl_one(k):
+    for loc,chunk in chunked_download(k):
+        with open(loc,'ab') as f:
             f.write(chunk)
+        progress.update(len(chunk))
+        progress.refresh()
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
-futs=[]
-for k in all_keys:
-    futs.append(pool.submit(download_one,k))
-for f in futs:
-    f.result()
+fs=[]
+for k in keys:
+    fs.append(pool.submit(dl_one,k))
+for x in fs:
+    x.result()
+
 progress.close()
-
-elapsed=time.time()-start
+elapsed=time.time()-t0
 mb=total_size/(1024*1024)
-read_speed=0
+read_sp=0
 if elapsed>0:
-    read_speed=mb/elapsed
+    read_sp=mb/elapsed
 
-print(f"{read_speed:.2f}")
+print(f"{read_sp:.2f}")
 EOF
 }
 
 function dedup_info() {
   python3 - <<EOF
-import sys, json
+import sys,json
 import boto3
 
-s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
-resp=s3.get_object(Bucket='ultihash', Key='v1/metrics/cluster')
-data=json.loads(resp['Body'].read())
+s3=boto3.client("s3",endpoint_url="http://127.0.0.1:8080")
+resp=s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
+data=json.loads(resp["Body"].read())
 
-orig = data.get('raw_data_size', 0)
-eff  = data.get('effective_data_size', 0)
-saved= orig - eff
-pct=0.0
+orig=data.get("raw_data_size",0)
+eff =data.get("effective_data_size",0)
+sav =orig-eff
+pct=0
 if orig>0:
-    pct=(saved/orig)*100
+    pct=(sav/orig)*100
 
-orig_gb=orig/1e9
-eff_gb =eff/1e9
-saved_gb=saved/1e9
-
-print(f"{orig_gb:.2f} {eff_gb:.2f} {saved_gb:.2f} {pct:.2f}")
+print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
 
@@ -379,10 +378,10 @@ import sys,boto3
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    pg=s3.list_objects_v2(Bucket=bucket)
-    for o in pg.get('Contents',[]):
+    p=s3.list_objects_v2(Bucket=bucket)
+    for o in p.get("Contents",[]):
         s3.delete_object(Bucket=bucket,Key=o["Key"])
     s3.delete_bucket(Bucket=bucket)
 except:
@@ -412,19 +411,19 @@ function main_loop() {
     # (A) blank line
     echo ""
 
-    # Write data
+    # Write bar
     WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
 
     # (B) blank line
     echo ""
 
-    # Read data
+    # Read bar
     READ_SPEED=$(read_data "$DATAPATH" | tr -d '\r\n')
 
     # (C) blank line
     echo ""
 
-    # Dedup stats
+    # dedup stats
     DE_INFO=$(dedup_info)
     ORIG_GB=$(echo "$DE_INFO" | awk '{print $1}')
     EFF_GB=$(echo "$DE_INFO"  | awk '{print $2}')
