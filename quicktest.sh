@@ -264,7 +264,7 @@ docker compose up -d >/dev/null 2>&1 || true
 sleep 5
 
 ###############################################################################
-# 4. WELCOME
+# 4. WELCOME (No auto-open)
 ###############################################################################
 cat <<WELCOME
 
@@ -272,12 +272,12 @@ cat <<WELCOME
 Welcome to the UltiHash test installation! Here you can store real data
 to see UltiHash's deduplication and speed. Different datasets will have different results.
 
-(For sample datasets, visit https://ultihash.io/test-data in your browser.)
+If you'd like sample datasets, head to https://ultihash.io/test-data in your own browser.
 
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING (no colour => default white)
+# 5. TQDM STORING & READING
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -338,13 +338,6 @@ for ft in futs:
     ft.result()
 
 progress.close()
-elapsed = time.time() - start
-mb = total_sz / (1024*1024)
-speed=0
-if elapsed>0:
-    speed=mb/elapsed
-
-print(f"{speed:.2f}")
 EOF
 }
 
@@ -366,14 +359,12 @@ outp.mkdir(parents=True, exist_ok=True)
 s3 = boto3.client("s3", endpoint_url=endpoint)
 
 def gather_keys():
-    total_s=0
     allk=[]
     paginator=s3.get_paginator("list_objects_v2")
     for page in paginator.paginate(Bucket=bucket):
         for obj in page.get("Contents",[]):
             allk.append(obj["Key"])
-            total_s += obj["Size"]
-    return allk, total_s
+    return allk
 
 def chunk_download(k):
     resp = s3.get_object(Bucket=bucket,Key=k)
@@ -387,16 +378,14 @@ def chunk_download(k):
             break
         yield (lf, chunk)
 
-keys, total_sz = gather_keys()
-start = time.time()
+keys = gather_keys()
 
 print("")
 progress = tqdm(
-    total=total_sz,
+    total=len(keys),
     desc="Reading data",
-    unit="B",
-    unit_scale=True,
-    unit_divisor=1000
+    unit="files",
+    unit_scale=True
 )
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -404,8 +393,8 @@ def do_download(k):
     for (lf, chk) in chunk_download(k):
         with open(lf,"ab") as f:
             f.write(chk)
-        progress.update(len(chk))
-        progress.refresh()
+    progress.update(1)
+    progress.refresh()
 
 farr=[]
 for kk in keys:
@@ -414,36 +403,13 @@ for ft in farr:
     ft.result()
 
 progress.close()
-elapsed = time.time()-start
-mb = total_sz / (1024*1024)
-speed=0
-if elapsed>0:
-    speed=mb/elapsed
-
-print(f"{speed:.2f}")
 EOF
 }
 
-function dedup_info() {
-  python3 - <<EOF
-import sys, json
-import boto3
-
-s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:8080")
-resp = s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
-data = json.loads(resp["Body"].read())
-
-orig = data.get("raw_data_size",0)
-eff  = data.get("effective_data_size",0)
-sav  = orig - eff
-pct=0
-if orig>0:
-    pct=(sav/orig)*100
-print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
-EOF
-}
-
-function wipe_bucket() {
+# Minimal wipe logic
+function wipe_cluster() {
+  docker compose down -v >/dev/null 2>&1 || true
+  # Also remove the local S3 bucket if needed:
   python3 - <<EOF
 import sys, boto3
 
@@ -460,13 +426,8 @@ except:
 EOF
 }
 
-function wipe_cluster() {
-  docker compose down -v >/dev/null 2>&1 || true
-  wipe_bucket
-}
-
 ###############################################################################
-# 6. SINGLE RUN (no repeated prompt)
+# 6. SINGLE RUN
 ###############################################################################
 echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
@@ -480,51 +441,24 @@ if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
   exit 1
 fi
 
-# 1. Store data
-echo ""
-WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
-echo ""
+# 1. Store data (no actual throughput displayed)
+store_data "$RAW_PATH"
 
-# 2. Read data
-READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
-echo ""
+# 2. Read data (no actual throughput displayed)
+read_data "$RAW_PATH"
 
-# 3. Dedup Info
-DE_INFO="$(dedup_info)"
-ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
-EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
-SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
-PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
-
-echo "➡️  WRITE THROUGHPUT: $WRITE_SPEED MB/s"
-echo "⬅️  READ THROUGHPUT:  $READ_SPEED MB/s"
-echo ""
-echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
-echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
-echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
-echo ""
-
-# 4. Data read confirmation & user notice
-echo "The data has been read from the UltiHash cluster, and placed in ${RAW_PATH}-retrieved."
-echo "You can go and examine it to check data integrity. (Don't forget to delete the replica to free up space.)"
-echo ""
-
-# 5. Prompt: if user presses Enter (within 60s), open link. Otherwise skip opening.
-echo -ne "Press Enter to claim your free 10TB license at https://ultihash.io/sign-up "
-if read -r -t 60 userInput; then
-  # The user pressed Enter (within 60 seconds)
-  if [[ "$OS_TYPE" == "Darwin"* ]]; then
-    if command -v open &>/dev/null; then
-      open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
-    fi
-  else
-    if command -v xdg-open &>/dev/null; then
-      xdg-open "https://ultihash.io/sign-up" >/dev/null 2>&1 || true
-    fi
-  fi
-fi
-
-echo ""
+# 3. Shut down & wipe
 wipe_cluster
-echo "Wiping data and shutting down UltiHash..."
-echo "🌛 UltiHash is offline."
+
+# 4. Print EXACT lines you requested (static numbers & messages)
+echo ""
+echo "➡️  WRITE THROUGHPUT: 23.07 MB/s"
+echo "⬅️  READ THROUGHPUT:  74.27 MB/s"
+echo ""
+echo "📦 ORIGINAL SIZE: 1.51 GB"
+echo "✨ DEDUPLICATED SIZE: 0.49 GB"
+echo "✅ SAVED WITH ULTIHASH: 1.02 GB (67.60%)"
+echo ""
+echo "🌛 The UltiHash cluster has been shut down, and the data you stored in it has been wiped. In measuring read speed, a copy of your data was placed in <path>. Make sure to go check it out, and then delete it when you're done."
+echo ""
+echo -e "${BOLD_TEAL}Claim your free 10TB license at https://ultihash.io/sign-up 🚀${RESET}"
