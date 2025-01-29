@@ -2,31 +2,26 @@
 set -e
 
 ###############################################################################
-# 0. MACOS DOCKER CHECK + PRE-SUPPLIED CREDENTIALS
+# 0. MACOS DOCKER CHECK + CREDENTIALS
 ###############################################################################
-# This block ensures that on macOS, Docker Desktop is installed & running
-# before we do anything else.
-
 OS_TYPE="$(uname -s)"
 
-if [[ "$OSTYPE" == "darwin"* ]]; then
+if [[ "$OS_TYPE" == "Darwin"* ]]; then
     echo "🔍 Checking Docker on macOS..."
 
-    # 1) Confirm Docker is installed
-    if ! command -v docker &> /dev/null; then
+    # 1) Docker installed?
+    if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
         echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
         exit 1
     fi
 
-    # 2) Confirm Docker Desktop is running
+    # 2) Docker running?
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
         echo "🏁 Open Docker Desktop, wait for it to start, then press Enter to continue..."
-        # flush any leftover input
-        read -r  # Wait for the user to press Enter
+        read -r  # Wait for user input to press Enter
 
-        # Re-check
         if ! docker info &>/dev/null; then
             echo "❌ Docker Desktop is still not running. Please try again later."
             exit 1
@@ -34,7 +29,7 @@ if [[ "$OSTYPE" == "darwin"* ]]; then
     fi
 fi
 
-# Now define the credentials + license
+# Pre-supplied credentials + license
 UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
 UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
@@ -53,11 +48,10 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # blank line before everything
+echo ""  # blank line
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (AWS CLI → Python + boto3/tqdm → Docker)
-#    in quiet mode for Linux / Windows. On macOS we already checked Docker above
+# 2. INSTALLING PREREQUISITES (QUIET)
 ###############################################################################
 echo "Installing prerequisites..."
 
@@ -66,10 +60,14 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
-# We'll define quiet install functions:
 function install_aws_cli_quiet() {
   if ! command -v aws &>/dev/null; then
     case "$OS_TYPE" in
+      Darwin)
+        if command -v brew &>/dev/null; then
+          brew install awscli >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
       Linux)
         if command -v apt-get &>/dev/null; then
           sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
@@ -78,11 +76,6 @@ function install_aws_cli_quiet() {
           unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
           sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
           rm -rf awscliv2.zip aws/
-        fi
-        ;;
-      Darwin)
-        if command -v brew &>/dev/null; then
-          brew install awscli >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
       MINGW*|MSYS*|CYGWIN*)
@@ -97,15 +90,15 @@ function install_aws_cli_quiet() {
 function install_python_boto3_tqdm_quiet() {
   if ! command -v python3 &>/dev/null; then
     case "$OS_TYPE" in
+      Darwin)
+        if command -v brew &>/dev/null; then
+          brew install python >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
       Linux)
         if command -v apt-get &>/dev/null; then
           sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
           sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
-        fi
-        ;;
-      Darwin)
-        if command -v brew &>/dev/null; then
-          brew install python >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
       MINGW*|MSYS*|CYGWIN*)
@@ -115,14 +108,13 @@ function install_python_boto3_tqdm_quiet() {
         ;;
     esac
   fi
-  # quietly pip install
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade boto3 tqdm >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
 function install_docker_quiet() {
-  # For Mac we skip because we rely on manual Docker Desktop
+  # If macOS, skip because user uses Docker Desktop
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
@@ -153,7 +145,7 @@ function install_docker_quiet() {
     esac
   fi
 
-  # Attempt to start Docker on Linux
+  # Start Docker on Linux
   if [[ "$OS_TYPE" == "Linux"* ]]; then
     sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
   fi
@@ -167,11 +159,11 @@ install_python_boto3_tqdm_quiet
 echo "✅ Python + boto3 + tqdm installed."
 
 install_docker_quiet
-# If on mac, we skip the auto-install
-if [[ "$OS_TYPE" != "Darwin"* ]]; then
+if [[ "$OS_TYPE" == "Darwin"* ]]; then
+  # No mention of Docker on macOS
   echo "✅ Docker installed."
 else
-  echo "✅ Docker installed (on macOS, please open Docker.app)."
+  echo "✅ Docker installed."
 fi
 
 ###############################################################################
@@ -295,7 +287,7 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 WELCOME
 
 ###############################################################################
-# 5. TQDM-BASED STORING & READING
+# 5. TQDM STORING & READING
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -321,13 +313,13 @@ def gather_files(pp):
     if pp.is_file():
         return [(pp,pp.parent)], pp.stat().st_size
     st=0
-    files_list=[]
-    for (root,dirs,fils) in os.walk(pp):
-        for f in fils:
+    listing=[]
+    for (root,dirs,files) in os.walk(pp):
+        for f in files:
             fu=pathlib.Path(root)/f
             st+=fu.stat().st_size
-            files_list.append((fu,pp))
-    return files_list, st
+            listing.append((fu,pp))
+    return listing,st
 
 ls, total_sz=gather_files(p)
 t0=time.time()
@@ -347,13 +339,13 @@ def do_store(fp,base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    key=str(fp.relative_to(base))
-    s3.upload_file(str(fp),bucket,key,Callback=cb)
+    k=str(fp.relative_to(base))
+    s3.upload_file(str(fp),bucket,k,Callback=cb)
 
-futures=[]
+futs=[]
 for (fp,base) in ls:
-    futures.append(pool.submit(do_store,fp,base))
-for fut in futures:
+    futs.append(pool.submit(do_store,fp,base))
+for fut in futs:
     fut.result()
 
 progress.close()
@@ -385,33 +377,33 @@ outp.mkdir(parents=True,exist_ok=True)
 s3=boto3.client("s3",endpoint_url=endpoint)
 
 def gather_keys():
-    allk=[]
     sum_s=0
+    allk=[]
     pag=s3.get_paginator("list_objects_v2")
     for page in pag.paginate(Bucket=bucket):
-        for o in page.get("Contents",[]):
-            allk.append(o["Key"])
-            sum_s+=o["Size"]
+        for ob in page.get("Contents",[]):
+            allk.append(ob["Key"])
+            sum_s+=ob["Size"]
     return allk,sum_s
 
 def chunk_download(k):
     r=s3.get_object(Bucket=bucket,Key=k)
-    body=r["Body"]
+    bod=r["Body"]
     lf=outp/bucket/k
     lf.parent.mkdir(parents=True,exist_ok=True)
 
     while True:
-        chunk=body.read(128*1024)
+        chunk=bod.read(128*1024)
         if not chunk:
             break
         yield (lf,chunk)
 
-keys,total_s=gather_keys()
+keys,total_sz=gather_keys()
 t0=time.time()
 
 print("")
 progress=tqdm(
-    total=total_s,
+    total=total_sz,
     desc="Reading data",
     unit="B",
     unit_scale=True,
@@ -427,15 +419,15 @@ def do_download(k):
         progress.update(len(chunk))
         progress.refresh()
 
-fs=[]
+futs=[]
 for kk in keys:
-    fs.append(pool.submit(do_download,kk))
-for x in fs:
+    futs.append(pool.submit(do_download,kk))
+for x in futs:
     x.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_s/(1024*1024)
+mb=total_sz/(1024*1024)
 rd=0
 if elapsed>0:
     rd=mb/elapsed
@@ -466,13 +458,12 @@ EOF
 function wipe_bucket() {
   python3 - <<EOF
 import sys,boto3
-
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    pg=s3.list_objects_v2(Bucket=b)
-    for ob in pg.get("Contents",[]):
+    p=s3.list_objects_v2(Bucket=b).get("Contents",[])
+    for ob in p:
         s3.delete_object(Bucket=b,Key=ob["Key"])
     s3.delete_bucket(Bucket=b)
 except:
@@ -486,12 +477,13 @@ function wipe_cluster() {
 }
 
 ###############################################################################
-# 6. MAIN LOOP (store → read → results)
+# 6. MAIN LOOP (store→read→results)
 ###############################################################################
 function main_loop() {
   while true; do
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
-    IFS= read -r DATAPATH
+    # read -r from /dev/tty ensures we wait on mac
+    IFS= read -r DATAPATH < /dev/tty
 
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
     if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
@@ -499,22 +491,16 @@ function main_loop() {
       continue
     fi
 
-    # (A) blank line
     echo ""
 
-    # Write
     WRITE_SPEED="$(store_data "$DATAPATH" | tr -d '\r\n')"
 
-    # (B) blank line
     echo ""
 
-    # Read
     READ_SPEED="$(read_data "$DATAPATH" | tr -d '\r\n')"
 
-    # (C) blank line
     echo ""
 
-    # Dedup stats
     DE_INFO="$(dedup_info)"
     ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
     EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
@@ -530,7 +516,7 @@ function main_loop() {
 
     echo ""
     echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
-    IFS= read -r ANSWER
+    IFS= read -r ANSWER < /dev/tty
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
       docker compose down -v || true
