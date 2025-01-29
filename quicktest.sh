@@ -21,16 +21,39 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # extra blank line
+echo ""  # extra blank line before everything
 
 ###############################################################################
-# 2. INSTALL PREREQUISITES
+# 2. INSTALLING PREREQUISITES
 ###############################################################################
 echo "Installing prerequisites..."
 
+# Update package index
 sudo apt-get update -y -qq > /dev/null 2>&1
 
-# Docker
+# 1) AWS CLI
+if ! command -v aws &>/dev/null; then
+  sudo apt-get install -y -qq unzip > /dev/null 2>&1
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  unzip -q awscliv2.zip
+  sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin > /dev/null 2>&1 || true
+  rm -rf awscliv2.zip aws/
+fi
+echo "✅ AWS CLI installed."
+
+# 2) boto3
+if ! python3 -c "import boto3" 2>/dev/null; then
+  sudo apt-get install -y -qq python3-boto3 > /dev/null 2>&1
+fi
+echo "✅ boto3 installed."
+
+# 3) tqdm
+if ! python3 -c "import tqdm" 2>/dev/null; then
+  sudo apt-get install -y -qq python3-tqdm > /dev/null 2>&1
+fi
+echo "✅ tqdm installed."
+
+# 4) Docker last
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -51,29 +74,12 @@ if ! sudo systemctl is-active --quiet docker; then
 fi
 echo "✅ Docker installed."
 
-# AWS CLI
-if ! command -v aws &>/dev/null; then
-  sudo apt-get install -y -qq unzip > /dev/null 2>&1
-  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-  unzip -q awscliv2.zip
-  sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin > /dev/null 2>&1 || true
-  rm -rf awscliv2.zip aws/
-fi
-echo "✅ AWS CLI installed."
-
-# Python + boto3 + tqdm
-if ! command -v python3 &>/dev/null; then
-  sudo apt-get install -y -qq python3 > /dev/null 2>&1
-fi
-sudo apt-get install -y -qq python3-boto3 python3-tqdm > /dev/null 2>&1
-echo "✅ Python + boto3 + tqdm installed."
-
 ###############################################################################
 # 3. SPINNING UP ULTIHASH
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
-echo ""
+echo "🚀 UltiHash is running!"
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
@@ -176,8 +182,6 @@ export UH_MONITORING_TOKEN="$UH_MONITORING_TOKEN"
 docker compose up -d > /dev/null 2>&1
 sleep 5
 
-echo "🚀 UltiHash is running!"
-
 ###############################################################################
 # 4. PRINT DIVIDER + WELCOME
 ###############################################################################
@@ -194,11 +198,10 @@ if command -v xdg-open &> /dev/null; then
 fi
 
 ###############################################################################
-# 5. store_data (write) + read_data (download) + dedup_info
+# 5. store_data + read_data + dedup_info
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
-  # We'll measure and produce a single float for the write speed
   python3 - <<EOF
 import sys, os, pathlib, json, time
 import concurrent.futures
@@ -262,7 +265,7 @@ write_speed = 0
 if elapsed>0:
     write_speed = mb/elapsed
 
-print(f"{write_speed:.2f}")  # print numeric speed to stdout
+print(f"{write_speed:.2f}")  # numeric speed
 EOF
 }
 
@@ -280,7 +283,7 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
 data_path_str="$DATAPATH".strip()
-out_dir_str ="$OUTPUT_DIR".strip()
+out_dir_str="$OUTPUT_DIR".strip()
 out_dir=pathlib.Path(out_dir_str)
 if not out_dir.exists():
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -293,25 +296,31 @@ def list_objs():
         for obj in page.get('Contents',[]):
             yield obj['Key'], obj['Size']
 
-# We'll do chunk-based reading to show a bar
 def chunked_download(key):
     resp=s3.get_object(Bucket=bucket, Key=key)
     body=resp["Body"]
     localfile=out_dir/bucket/key
     localfile.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(localfile,'wb') as f:
-        while True:
-            chunk=body.read(1024*128)  # 128KB chunk
-            if not chunk:
-                break
-            f.write(chunk)
-            yield len(chunk)
+    while True:
+        chunk=body.read(1024*128)  # 128KB chunk
+        if not chunk:
+            break
+        yield key, chunk
 
-all_keys=list(list_objs())
-total_size=sum(sz for (_,sz) in all_keys)
+def gather_keys():
+    allkeys=[]
+    total_size=0
+    paginator=s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket):
+        for obj in page.get('Contents',[]):
+            allkeys.append(obj['Key'])
+            total_size += obj['Size']
+    return allkeys,total_size
+
+all_keys,total_size = gather_keys()
+
 start=time.time()
-
 print("")
 progress = tqdm(
     total=total_size,
@@ -322,14 +331,17 @@ progress = tqdm(
     colour="#5bdbb4"
 )
 
-def do_download(k,sz):
-    for chunk_sz in chunked_download(k):
-        progress.update(chunk_sz)
+def download_one(k):
+    for key,chunk in chunked_download(k):
+        progress.update(len(chunk))
+        localf=out_dir/bucket/key
+        with open(localf,'ab') as f:
+            f.write(chunk)
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 futs=[]
-for (k,sz) in all_keys:
-    futs.append(pool.submit(do_download,k,sz))
+for k in all_keys:
+    futs.append(pool.submit(download_one,k))
 for f in futs:
     f.result()
 progress.close()
@@ -340,7 +352,7 @@ read_speed=0
 if elapsed>0:
     read_speed=mb/elapsed
 
-print(f"{read_speed:.2f}")  # numeric read speed
+print(f"{read_speed:.2f}")  # numeric speed
 EOF
 }
 
@@ -355,8 +367,7 @@ data=json.loads(resp['Body'].read())
 
 orig = data.get('raw_data_size', 0)
 eff  = data.get('effective_data_size', 0)
-
-saved = orig - eff
+saved= orig - eff
 pct=0.0
 if orig>0:
     pct=(saved/orig)*100
@@ -365,9 +376,31 @@ orig_gb=orig/1e9
 eff_gb =eff/1e9
 saved_gb=saved/1e9
 
-# Print all 4 in a single line so shell can parse
+# Print 4 numeric vals (shell can parse)
 print(f"{orig_gb:.2f} {eff_gb:.2f} {saved_gb:.2f} {pct:.2f}")
 EOF
+}
+
+function wipe_bucket() {
+  python3 - <<EOF
+import sys,boto3
+
+endpoint="http://127.0.0.1:8080"
+bucket="test-bucket"
+s3=boto3.client("s3", endpoint_url=endpoint)
+try:
+    objs=s3.list_objects_v2(Bucket=bucket).get("Contents",[])
+    for o in objs:
+        s3.delete_object(Bucket=bucket,Key=o["Key"])
+    s3.delete_bucket(Bucket=bucket)
+except:
+    pass
+EOF
+}
+
+function wipe_cluster() {
+  docker compose down -v > /dev/null 2>&1 || true
+  wipe_bucket
 }
 
 ###############################################################################
@@ -378,18 +411,22 @@ function main_loop() {
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} " > /dev/tty
     IFS= read -r DATAPATH < /dev/tty
 
-    # strip single quotes if they wrap entire path
+    # remove single quotes
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
-
     if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
       echo "❌ You must provide a valid path. Please try again."
       continue
     fi
 
-    # 1) Write data + measure speed
+    # 1) Write data
     WRITE_SPEED=$(store_data "$DATAPATH")
-    # 2) Read data + measure speed
+
+    # (Add blank line between bars)
+    echo ""
+
+    # 2) Read data
     READ_SPEED=$(read_data "$DATAPATH")
+
     # 3) Dedup stats
     DE_INFO=$(dedup_info)
     ORIG_GB=$(echo "$DE_INFO" | awk '{print $1}')
@@ -397,10 +434,10 @@ function main_loop() {
     SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
     PCT=$(echo "$DE_INFO"     | awk '{print $4}')
 
-    # Now we show results *after* both progress bars
+    # Show results
     echo ""
-    echo "➡️ WRITE SPEED: $WRITE_SPEED MB/s"
-    echo "⬅️ READ SPEED:  $READ_SPEED MB/s"
+    echo "➡️ WRITE THROUGHPUT: $WRITE_SPEED MB/s"
+    echo "⬅️ READ THROUGHPUT:  $READ_SPEED MB/s"
     echo ""
     echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
     echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
@@ -411,7 +448,6 @@ function main_loop() {
     IFS= read -r ANSWER < /dev/tty
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
       docker compose down -v > /dev/null 2>&1
-      # Wipe bucket
       wipe_bucket
 
       echo ""
