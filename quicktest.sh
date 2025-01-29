@@ -104,6 +104,7 @@ function install_boto3_quiet() {
     python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
   fi
 }
+
 function install_tqdm_quiet() {
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
@@ -278,16 +279,16 @@ WELCOME
 # Attempt to open test-data link in default browser
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
   if command -v open &>/dev/null; then
-    NO_AT_BRIDGE=1 open "https://ultihash.io/test-data" || true
+    open "https://ultihash.io/test-data" || true
   fi
 else
   if command -v xdg-open &>/dev/null; then
-    NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/test-data" || true
+    xdg-open "https://ultihash.io/test-data" || true
   fi
 fi
 
 ###############################################################################
-# 5. TQDM STORING & READING (colour="cyan")
+# 5. TQDM STORING & READING (no colour param => white bars)
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -330,7 +331,6 @@ progress = tqdm(
     desc="Writing data",
     unit="B",
     unit_scale=True,
-    colour="cyan",
     unit_divisor=1000
 )
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
@@ -385,14 +385,13 @@ def gather_keys():
         for obj in page.get("Contents",[]):
             allk.append(obj["Key"])
             total_s+=obj["Size"]
-    return allk, total_s
+    return allk,total_s
 
 def chunk_download(k):
     resp=s3.get_object(Bucket=bucket,Key=k)
     body=resp["Body"]
     lf=outp/bucket/k
     lf.parent.mkdir(parents=True, exist_ok=True)
-
     while True:
         chunk=body.read(128*1024)
         if not chunk:
@@ -408,7 +407,6 @@ progress = tqdm(
     desc="Reading data",
     unit="B",
     unit_scale=True,
-    colour="cyan",
     unit_divisor=1000
 )
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
@@ -449,17 +447,17 @@ data=json.loads(resp["Body"].read())
 
 orig=data.get("raw_data_size",0)
 eff=data.get("effective_data_size",0)
-saved=orig-eff
+sav=orig-eff
 pct=0
 if orig>0:
-    pct=(saved/orig)*100
-print(f"{orig/1e9:.2f} {eff/1e9:.2f} {saved/1e9:.2f} {pct:.2f}")
+    pct=(sav/orig)*100
+print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
 
 function wipe_bucket() {
   python3 - <<EOF
-import sys, boto3
+import sys,boto3
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3", endpoint_url=endpoint)
@@ -531,16 +529,16 @@ function main_loop() {
       echo "Shutting down UltiHash..."
       docker compose down -v >/dev/null 2>&1 || true
 
-      # Show free 10TB license prompt + auto-open
+      # Show free 10TB license prompt + auto-open here
       echo ""
       echo "To unlock your free 10TB license for production use, head to https://ultihash.io/sign-up"
       if [[ "$OS_TYPE" == "Darwin"* ]]; then
         if command -v open &>/dev/null; then
-          NO_AT_BRIDGE=1 open "https://ultihash.io/sign-up" || true
+          open "https://ultihash.io/sign-up" || true
         fi
       else
         if command -v xdg-open &>/dev/null; then
-          NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/sign-up" || true
+          xdg-open "https://ultihash.io/sign-up" || true
         fi
       fi
 
