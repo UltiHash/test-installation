@@ -2,7 +2,7 @@
 set -e
 
 ###############################################################################
-# 0. MACOS DOCKER CHECK + CREDENTIALS
+# 0. MACOS DOCKER CHECK BEFORE ANYTHING
 ###############################################################################
 OS_TYPE="$(uname -s)"
 
@@ -20,7 +20,10 @@ if [[ "$OS_TYPE" == "Darwin"* ]]; then
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
         echo "🏁 Open Docker Desktop, wait for it to start, then press Enter to continue..."
-        read -r  # Wait for user input to press Enter
+        # Ensure no leftover input
+        stty flush 2>/dev/null || true
+        # Wait for user to press Enter
+        read -r < /dev/tty
 
         if ! docker info &>/dev/null; then
             echo "❌ Docker Desktop is still not running. Please try again later."
@@ -29,18 +32,24 @@ if [[ "$OS_TYPE" == "Darwin"* ]]; then
     fi
 fi
 
-# Pre-supplied credentials + license
+###############################################################################
+# PRE-SUPPLIED CREDENTIALS / LICENSE
+###############################################################################
 UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
 UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & UTILITIES
+# 1. COLORS & TRIM UTIL
 ###############################################################################
-BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
+
+function trim_trailing_spaces() {
+  # usage: TRIMMED="$(trim_trailing_spaces "$SOMEPATH")"
+  echo -e "$1" | sed -E 's/[[:space:]]+$//'
+}
 
 function print_divider() {
   echo ""
@@ -54,7 +63,6 @@ echo ""  # blank line
 # 2. INSTALLING PREREQUISITES (QUIET)
 ###############################################################################
 echo "Installing prerequisites..."
-
 LOG_DIR="$HOME/ultihash-test"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
@@ -87,7 +95,20 @@ function install_aws_cli_quiet() {
   fi
 }
 
-function install_python_boto3_tqdm_quiet() {
+function install_boto3_quiet() {
+  # We'll attempt pip install
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
+  fi
+}
+function install_tqdm_quiet() {
+  # We'll attempt pip install
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
+  fi
+}
+
+function install_python_quiet() {
   if ! command -v python3 &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
@@ -108,16 +129,14 @@ function install_python_boto3_tqdm_quiet() {
         ;;
     esac
   fi
-  if command -v python3 &>/dev/null; then
-    python3 -m pip install --quiet --upgrade boto3 tqdm >>"$LOG_FILE" 2>&1 || true
-  fi
 }
 
 function install_docker_quiet() {
-  # If macOS, skip because user uses Docker Desktop
+  # On mac we skip because user must have Docker Desktop
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
+
   if ! command -v docker &>/dev/null; then
     case "$OS_TYPE" in
       Linux)
@@ -145,26 +164,29 @@ function install_docker_quiet() {
     esac
   fi
 
-  # Start Docker on Linux
   if [[ "$OS_TYPE" == "Linux"* ]]; then
     sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
-# Do the quiet installs
+# 1) AWS CLI
 install_aws_cli_quiet
 echo "✅ AWS CLI installed."
 
-install_python_boto3_tqdm_quiet
-echo "✅ Python + boto3 + tqdm installed."
+# 2) Python
+install_python_quiet
 
+# 3) boto3
+install_boto3_quiet
+echo "✅ boto3 installed."
+
+# 4) tqdm
+install_tqdm_quiet
+echo "✅ tqdm installed."
+
+# 5) Docker
 install_docker_quiet
-if [[ "$OS_TYPE" == "Darwin"* ]]; then
-  # No mention of Docker on macOS
-  echo "✅ Docker installed."
-else
-  echo "✅ Docker installed."
-fi
+echo "✅ Docker installed."
 
 ###############################################################################
 # 3. SPINNING UP ULTIHASH (quietly)
@@ -175,7 +197,7 @@ echo "🚀 UltiHash is running!"
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
-cd "$ULTIHASH_DIR" 2>/dev/null || true
+cd "$ULTIHASH_DIR"
 
 cat <<EOF > policies.json
 {
@@ -311,7 +333,7 @@ except:
 
 def gather_files(pp):
     if pp.is_file():
-        return [(pp,pp.parent)], pp.stat().st_size
+        return [(pp, pp.parent)], pp.stat().st_size
     st=0
     listing=[]
     for (root,dirs,files) in os.walk(pp):
@@ -319,13 +341,13 @@ def gather_files(pp):
             fu=pathlib.Path(root)/f
             st+=fu.stat().st_size
             listing.append((fu,pp))
-    return listing,st
+    return listing, st
 
 ls, total_sz=gather_files(p)
 t0=time.time()
 
 print("")
-progress=tqdm(
+progress = tqdm(
     total=total_sz,
     desc="Writing data",
     unit="B",
@@ -333,20 +355,20 @@ progress=tqdm(
     colour="#5bdbb4",
     unit_divisor=1000
 )
-pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
+pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def do_store(fp,base):
+def do_store(fp, base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    k=str(fp.relative_to(base))
-    s3.upload_file(str(fp),bucket,k,Callback=cb)
+    key = str(fp.relative_to(base))
+    s3.upload_file(str(fp), bucket, key, Callback=cb)
 
 futs=[]
 for (fp,base) in ls:
-    futs.append(pool.submit(do_store,fp,base))
-for fut in futs:
-    fut.result()
+    futs.append(pool.submit(do_store, fp, base))
+for ft in futs:
+    ft.result()
 
 progress.close()
 elapsed=time.time()-t0
@@ -362,7 +384,7 @@ EOF
 function read_data() {
   local DATAPATH="$1"
   python3 - <<EOF
-import sys,os,pathlib,time
+import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
@@ -370,35 +392,34 @@ from tqdm import tqdm
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
-p_str="$DATAPATH".strip()
-outp=pathlib.Path(f"{p_str}-retrieved")
-outp.mkdir(parents=True,exist_ok=True)
+dp="$DATAPATH".strip()
+outp=pathlib.Path(f"{dp}-retrieved")
+outp.mkdir(parents=True, exist_ok=True)
 
-s3=boto3.client("s3",endpoint_url=endpoint)
+s3=boto3.client("s3", endpoint_url=endpoint)
 
 def gather_keys():
-    sum_s=0
     allk=[]
-    pag=s3.get_paginator("list_objects_v2")
-    for page in pag.paginate(Bucket=bucket):
-        for ob in page.get("Contents",[]):
-            allk.append(ob["Key"])
-            sum_s+=ob["Size"]
-    return allk,sum_s
+    total_s=0
+    paginator=s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket):
+        for obj in page.get("Contents",[]):
+            allk.append(obj["Key"])
+            total_s+=obj["Size"]
+    return allk, total_s
 
 def chunk_download(k):
     r=s3.get_object(Bucket=bucket,Key=k)
     bod=r["Body"]
     lf=outp/bucket/k
     lf.parent.mkdir(parents=True,exist_ok=True)
-
     while True:
         chunk=bod.read(128*1024)
         if not chunk:
             break
-        yield (lf,chunk)
+        yield (lf, chunk)
 
-keys,total_sz=gather_keys()
+keys, total_sz=gather_keys()
 t0=time.time()
 
 print("")
@@ -410,20 +431,21 @@ progress=tqdm(
     colour="#5bdbb4",
     unit_divisor=1000
 )
+
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_download(k):
-    for lf,chunk in chunk_download(k):
+    for (lf,chk) in chunk_download(k):
         with open(lf,"ab") as f:
-            f.write(chunk)
-        progress.update(len(chunk))
+            f.write(chk)
+        progress.update(len(chk))
         progress.refresh()
 
-futs=[]
+fs=[]
 for kk in keys:
-    futs.append(pool.submit(do_download,kk))
-for x in futs:
-    x.result()
+    fs.append(pool.submit(do_download, kk))
+for ft in fs:
+    ft.result()
 
 progress.close()
 elapsed=time.time()-t0
@@ -438,7 +460,7 @@ EOF
 
 function dedup_info() {
   python3 - <<EOF
-import sys,json
+import sys, json
 import boto3
 
 s3=boto3.client("s3",endpoint_url="http://127.0.0.1:8080")
@@ -457,7 +479,7 @@ EOF
 
 function wipe_bucket() {
   python3 - <<EOF
-import sys,boto3
+import sys, boto3
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
@@ -477,15 +499,17 @@ function wipe_cluster() {
 }
 
 ###############################################################################
-# 6. MAIN LOOP (store→read→results)
+# 6. MAIN LOOP
 ###############################################################################
 function main_loop() {
   while true; do
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
-    # read -r from /dev/tty ensures we wait on mac
     IFS= read -r DATAPATH < /dev/tty
 
+    # Trim trailing spaces
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
+    DATAPATH="$(trim_trailing_spaces "$DATAPATH")"
+
     if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
       echo "❌ You must provide a valid path. Please try again."
       continue
@@ -494,11 +518,9 @@ function main_loop() {
     echo ""
 
     WRITE_SPEED="$(store_data "$DATAPATH" | tr -d '\r\n')"
-
     echo ""
 
     READ_SPEED="$(read_data "$DATAPATH" | tr -d '\r\n')"
-
     echo ""
 
     DE_INFO="$(dedup_info)"
@@ -515,7 +537,7 @@ function main_loop() {
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
-    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
+    echo -ne "${BOLD_TEAL}\033[1mWould you like to store a different dataset? (y/n) ${RESET}"
     IFS= read -r ANSWER < /dev/tty
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
@@ -526,7 +548,6 @@ function main_loop() {
       echo "Preparing the cluster..."
       docker compose up -d || true
       sleep 5
-
       echo ""
     else
       echo ""
