@@ -7,26 +7,25 @@ set -e
 OS_TYPE="$(uname -s)"
 
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
-    echo "🔍 Checking Docker on macOS..."
-
-    # 1) Docker installed?
+    # 1) Is Docker installed?
     if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
         echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
         exit 1
     fi
 
-    # 2) Docker running?
+    # 2) Is Docker running?
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
-        echo "🏁 Open Docker Desktop, wait for it to start, then press Enter to continue..."
-        # Ensure no leftover input
+        echo "Please open Docker Desktop, then press Enter to continue..."
+        # Flush leftover input
         stty flush 2>/dev/null || true
         # Wait for user to press Enter
         read -r < /dev/tty
 
+        # Re-check
         if ! docker info &>/dev/null; then
-            echo "❌ Docker Desktop is still not running. Please try again later."
+            echo "❌ Docker Desktop is still not running. Exiting."
             exit 1
         fi
     fi
@@ -41,13 +40,14 @@ UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsR
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & TRIM UTIL
+# 1. COLORS & UTILITIES
 ###############################################################################
+BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
-function trim_trailing_spaces() {
-  # usage: TRIMMED="$(trim_trailing_spaces "$SOMEPATH")"
+# Trim trailing spaces function
+trim_trailing_spaces() {
   echo -e "$1" | sed -E 's/[[:space:]]+$//'
 }
 
@@ -57,18 +57,18 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # blank line
-
 ###############################################################################
 # 2. INSTALLING PREREQUISITES (QUIET)
 ###############################################################################
+echo ""
 echo "Installing prerequisites..."
+
 LOG_DIR="$HOME/ultihash-test"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
-function install_aws_cli_quiet() {
+quiet_install_aws_cli() {
   if ! command -v aws &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
@@ -95,20 +95,7 @@ function install_aws_cli_quiet() {
   fi
 }
 
-function install_boto3_quiet() {
-  # We'll attempt pip install
-  if command -v python3 &>/dev/null; then
-    python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
-  fi
-}
-function install_tqdm_quiet() {
-  # We'll attempt pip install
-  if command -v python3 &>/dev/null; then
-    python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
-  fi
-}
-
-function install_python_quiet() {
+quiet_install_python() {
   if ! command -v python3 &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
@@ -131,8 +118,20 @@ function install_python_quiet() {
   fi
 }
 
-function install_docker_quiet() {
-  # On mac we skip because user must have Docker Desktop
+quiet_install_boto3() {
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
+  fi
+}
+
+quiet_install_tqdm() {
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
+  fi
+}
+
+quiet_install_docker() {
+  # On mac, user uses Docker Desktop, skip auto-install
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
@@ -169,27 +168,22 @@ function install_docker_quiet() {
   fi
 }
 
-# 1) AWS CLI
-install_aws_cli_quiet
+# Install
+quiet_install_aws_cli
 echo "✅ AWS CLI installed."
 
-# 2) Python
-install_python_quiet
-
-# 3) boto3
-install_boto3_quiet
+quiet_install_python
+quiet_install_boto3
 echo "✅ boto3 installed."
 
-# 4) tqdm
-install_tqdm_quiet
+quiet_install_tqdm
 echo "✅ tqdm installed."
 
-# 5) Docker
-install_docker_quiet
+quiet_install_docker
 echo "✅ Docker installed."
 
 ###############################################################################
-# 3. SPINNING UP ULTIHASH (quietly)
+# 3. SPINNING UP ULTIHASH
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
@@ -309,12 +303,12 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING
+# 5. TQDM STORING & READING (NO COLOR)
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
   python3 - <<EOF
-import sys, os, pathlib, json, time
+import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
@@ -322,8 +316,8 @@ from tqdm import tqdm
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
-dp="$DATAPATH".strip()
-p=pathlib.Path(dp)
+dp="$DATAPATH".rstrip()
+pp=pathlib.Path(dp)
 
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
@@ -331,53 +325,52 @@ try:
 except:
     pass
 
-def gather_files(pp):
-    if pp.is_file():
-        return [(pp, pp.parent)], pp.stat().st_size
+def gather_files(basep):
+    if basep.is_file():
+        return [(basep, basep.parent)], basep.stat().st_size
     st=0
-    listing=[]
-    for (root,dirs,files) in os.walk(pp):
+    fl=[]
+    for (root,dirs,files) in os.walk(basep):
         for f in files:
             fu=pathlib.Path(root)/f
             st+=fu.stat().st_size
-            listing.append((fu,pp))
-    return listing, st
+            fl.append((fu, basep))
+    return fl, st
 
-ls, total_sz=gather_files(p)
+files_list, total_size=gather_files(pp)
 t0=time.time()
 
 print("")
 progress = tqdm(
-    total=total_sz,
+    total=total_size,
     desc="Writing data",
     unit="B",
     unit_scale=True,
-    colour="#5bdbb4",
     unit_divisor=1000
 )
-pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def do_store(fp, base):
+def do_store(fp,base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    key = str(fp.relative_to(base))
-    s3.upload_file(str(fp), bucket, key, Callback=cb)
+    key=str(fp.relative_to(base))
+    s3.upload_file(str(fp),bucket,key,Callback=cb)
 
 futs=[]
-for (fp,base) in ls:
-    futs.append(pool.submit(do_store, fp, base))
+for (fp,bs) in files_list:
+    futs.append(pool.submit(do_store, fp, bs))
 for ft in futs:
     ft.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_sz/(1024*1024)
-wr=0
+mb=total_size/(1024*1024)
+wspd=0
 if elapsed>0:
-    wr=mb/elapsed
+    wspd=mb/elapsed
 
-print(f"{wr:.2f}")
+print(f"{wspd:.2f}")
 EOF
 }
 
@@ -392,69 +385,68 @@ from tqdm import tqdm
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
-dp="$DATAPATH".strip()
+dp="$DATAPATH".rstrip()
 outp=pathlib.Path(f"{dp}-retrieved")
-outp.mkdir(parents=True, exist_ok=True)
+outp.mkdir(parents=True,exist_ok=True)
 
 s3=boto3.client("s3", endpoint_url=endpoint)
 
 def gather_keys():
     allk=[]
     total_s=0
-    paginator=s3.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket):
+    pg=s3.get_paginator("list_objects_v2")
+    for page in pg.paginate(Bucket=bucket):
         for obj in page.get("Contents",[]):
             allk.append(obj["Key"])
             total_s+=obj["Size"]
-    return allk, total_s
+    return allk,total_s
 
 def chunk_download(k):
-    r=s3.get_object(Bucket=bucket,Key=k)
-    bod=r["Body"]
-    lf=outp/bucket/k
-    lf.parent.mkdir(parents=True,exist_ok=True)
+    resp=s3.get_object(Bucket=bucket,Key=k)
+    body=resp["Body"]
+    localf=outp/bucket/k
+    localf.parent.mkdir(parents=True,exist_ok=True)
+
     while True:
-        chunk=bod.read(128*1024)
+        chunk=body.read(128*1024)
         if not chunk:
             break
-        yield (lf, chunk)
+        yield (localf, chunk)
 
 keys, total_sz=gather_keys()
 t0=time.time()
 
 print("")
-progress=tqdm(
+progress = tqdm(
     total=total_sz,
     desc="Reading data",
     unit="B",
     unit_scale=True,
-    colour="#5bdbb4",
     unit_divisor=1000
 )
-
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_download(k):
-    for (lf,chk) in chunk_download(k):
+    for (lf, chk) in chunk_download(k):
         with open(lf,"ab") as f:
             f.write(chk)
         progress.update(len(chk))
         progress.refresh()
 
-fs=[]
+farr=[]
 for kk in keys:
-    fs.append(pool.submit(do_download, kk))
-for ft in fs:
+    farr.append(pool.submit(do_download, kk))
+for ft in farr:
     ft.result()
 
 progress.close()
 elapsed=time.time()-t0
 mb=total_sz/(1024*1024)
-rd=0
+rspd=0
 if elapsed>0:
-    rd=mb/elapsed
+    rspd=mb/elapsed
 
-print(f"{rd:.2f}")
+print(f"{rspd:.2f}")
 EOF
 }
 
@@ -467,25 +459,26 @@ s3=boto3.client("s3",endpoint_url="http://127.0.0.1:8080")
 resp=s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
 data=json.loads(resp["Body"].read())
 
-o=data.get("raw_data_size",0)
-e=data.get("effective_data_size",0)
-sav=o-e
+orig=data.get("raw_data_size",0)
+eff=data.get("effective_data_size",0)
+saved=orig-eff
 pct=0
-if o>0:
-    pct=(sav/o)*100
-print(f"{o/1e9:.2f} {e/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
+if orig>0:
+    pct=(saved/orig)*100
+print(f"{orig/1e9:.2f} {eff/1e9:.2f} {saved/1e9:.2f} {pct:.2f}")
 EOF
 }
 
 function wipe_bucket() {
   python3 - <<EOF
-import sys, boto3
+import sys,boto3
+
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    p=s3.list_objects_v2(Bucket=b).get("Contents",[])
-    for ob in p:
+    listing=s3.list_objects_v2(Bucket=b).get("Contents",[])
+    for ob in listing:
         s3.delete_object(Bucket=b,Key=ob["Key"])
     s3.delete_bucket(Bucket=b)
 except:
@@ -504,23 +497,24 @@ function wipe_cluster() {
 function main_loop() {
   while true; do
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
-    IFS= read -r DATAPATH < /dev/tty
+    IFS= read -r RAW_PATH < /dev/tty
 
-    # Trim trailing spaces
-    DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
-    DATAPATH="$(trim_trailing_spaces "$DATAPATH")"
+    # Trim trailing spaces if any
+    RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
+    # Also remove quotes if user dragged a folder
+    RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
-    if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
+    if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
       echo "❌ You must provide a valid path. Please try again."
       continue
     fi
 
     echo ""
 
-    WRITE_SPEED="$(store_data "$DATAPATH" | tr -d '\r\n')"
+    WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
     echo ""
 
-    READ_SPEED="$(read_data "$DATAPATH" | tr -d '\r\n')"
+    READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
     echo ""
 
     DE_INFO="$(dedup_info)"
@@ -537,7 +531,7 @@ function main_loop() {
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
-    echo -ne "${BOLD_TEAL}\033[1mWould you like to store a different dataset? (y/n) ${RESET}"
+    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
     IFS= read -r ANSWER < /dev/tty
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
