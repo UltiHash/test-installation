@@ -13,6 +13,7 @@ if [[ "$OS_TYPE" == "Darwin"* ]]; then
         echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
         exit 1
     fi
+
     # 2) Docker running?
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
@@ -42,11 +43,12 @@ BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
 trim_trailing_spaces() {
+  # usage: TRIMMED="$(trim_trailing_spaces "$SOMEPATH")"
   echo -e "$1" | sed -E 's/[[:space:]]+$//'
 }
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (QUIET)
+# 2. INSTALLING PREREQUISITES (QUIET) + COLORAMA
 ###############################################################################
 echo ""
 echo "Installing prerequisites..."
@@ -60,13 +62,11 @@ function install_aws_cli_quiet() {
   if ! command -v aws &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
-        # macOS with brew
         if command -v brew &>/dev/null; then
           brew install awscli >>"$LOG_FILE" 2>&1 || true
         fi
         ;;
       Linux)
-        # Ubuntu/Debian etc. with apt-get
         if command -v apt-get &>/dev/null; then
           sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
           sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
@@ -103,15 +103,19 @@ function install_boto3_quiet() {
     python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
   fi
 }
-
 function install_tqdm_quiet() {
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
   fi
 }
+function install_colorama_quiet() {
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade colorama >>"$LOG_FILE" 2>&1 || true
+  fi
+}
 
 function install_docker_quiet() {
-  # On mac we skip auto-install Docker Desktop
+  # On mac, skip auto-install
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
@@ -137,7 +141,6 @@ function install_docker_quiet() {
         ;;
     esac
   fi
-
   if [[ "$OS_TYPE" == "Linux"* ]]; then
     sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
   fi
@@ -153,11 +156,15 @@ echo "✅ boto3 installed."
 install_tqdm_quiet
 echo "✅ tqdm installed."
 
+# Install colorama so TQDM color is more likely to work on mac
+install_colorama_quiet
+echo "✅ colorama installed."
+
 install_docker_quiet
 echo "✅ Docker installed."
 
 ###############################################################################
-# 3. SPINNING UP ULTIHASH
+# 3. SPINNING UP ULTIHASH (quiet)
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
@@ -264,7 +271,7 @@ docker compose up -d >/dev/null 2>&1 || true
 sleep 5
 
 ###############################################################################
-# 4. WELCOME
+# 4. WELCOME + AUTO-OPEN TEST-DATA
 ###############################################################################
 cat <<WELCOME
 
@@ -276,8 +283,19 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 
 WELCOME
 
+# Try to open test-data in default browser
+if [[ "$OS_TYPE" == "Darwin"* ]]; then
+  if command -v open &>/dev/null; then
+    NO_AT_BRIDGE=1 open "https://ultihash.io/test-data" || true
+  fi
+else
+  if command -v xdg-open &>/dev/null; then
+    NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/test-data" || true
+  fi
+fi
+
 ###############################################################################
-# 5. TQDM STORING & READING (COLOUR="#5bdbb4" = UltiHash Teal)
+# 5. TQDM STORING & READING
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -286,6 +304,9 @@ import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
+import colorama
+
+colorama.init()  # Enable ANSI on Mac for custom color
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
@@ -319,10 +340,10 @@ progress = tqdm(
     desc="Writing data",
     unit="B",
     unit_scale=True,
-    colour="#5bdbb4",
+    colour="#5bdbb4",  # UltiHash teal
     unit_divisor=1000
 )
-pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
+pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_store(fp, base):
     def cb(x):
@@ -355,6 +376,9 @@ import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
+import colorama
+
+colorama.init()  # Enable ANSI on Mac for custom color
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
@@ -379,7 +403,7 @@ def chunk_download(k):
     resp=s3.get_object(Bucket=bucket,Key=k)
     body=resp["Body"]
     lf=outp/bucket/k
-    lf.parent.mkdir(parents=True,exist_ok=True)
+    lf.parent.mkdir(parents=True, exist_ok=True)
     while True:
         chunk=body.read(128*1024)
         if not chunk:
@@ -395,7 +419,7 @@ progress = tqdm(
     desc="Reading data",
     unit="B",
     unit_scale=True,
-    colour="#5bdbb4",
+    colour="#5bdbb4",  # UltiHash teal
     unit_divisor=1000
 )
 
@@ -503,7 +527,7 @@ function main_loop() {
     echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
-    # (A) Show "To unlock your free 10TB..." message & auto-open
+    # Show the sign-up link + auto-open it
     echo ""
     echo "To unlock your free 10TB license for production use, head to https://ultihash.io/sign-up"
     if [[ "$OS_TYPE" == "Darwin"* ]]; then
