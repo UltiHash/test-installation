@@ -21,14 +21,14 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # extra blank line before everything
+echo ""  # extra blank line
 
 ###############################################################################
 # 2. INSTALLING PREREQUISITES
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update package index
+# Update
 sudo apt-get update -y -qq > /dev/null 2>&1
 
 # 1) AWS CLI
@@ -53,7 +53,7 @@ if ! python3 -c "import tqdm" 2>/dev/null; then
 fi
 echo "✅ tqdm installed."
 
-# 4) Docker last
+# 4) Docker
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -376,7 +376,7 @@ orig_gb=orig/1e9
 eff_gb =eff/1e9
 saved_gb=saved/1e9
 
-# Print 4 numeric vals (shell can parse)
+# Print 4 numeric vals
 print(f"{orig_gb:.2f} {eff_gb:.2f} {saved_gb:.2f} {pct:.2f}")
 EOF
 }
@@ -387,7 +387,7 @@ import sys,boto3
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3=boto3.client("s3",endpoint_url=endpoint)
 try:
     objs=s3.list_objects_v2(Bucket=bucket).get("Contents",[])
     for o in objs:
@@ -420,10 +420,6 @@ function main_loop() {
 
     # 1) Write data
     WRITE_SPEED=$(store_data "$DATAPATH")
-
-    # (Add blank line between bars)
-    echo ""
-
     # 2) Read data
     READ_SPEED=$(read_data "$DATAPATH")
 
@@ -434,7 +430,6 @@ function main_loop() {
     SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
     PCT=$(echo "$DE_INFO"     | awk '{print $4}')
 
-    # Show results
     echo ""
     echo "➡️ WRITE THROUGHPUT: $WRITE_SPEED MB/s"
     echo "⬅️ READ THROUGHPUT:  $READ_SPEED MB/s"
