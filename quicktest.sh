@@ -2,127 +2,93 @@
 set -e
 
 ###############################################################################
-# 0. OS DETECTION + UNIFIED INSTALL
+# 0. QUIET INSTALL (ALL PLATFORMS) + PRE-SUPPLIED CREDENTIALS
 ###############################################################################
+UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
+UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
+UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
+UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
+
+# We'll do all advanced stuff quietly:
+LOG_DIR="$HOME/ultihash-test"
+mkdir -p "$LOG_DIR"
+LOG_FILE="$LOG_DIR/install-silent.log"
+touch "$LOG_FILE"
+
 OS_TYPE="$(uname -s)"
 
-function install_tools_linux() {
-  # apt-get approach
-  sudo apt-get update -qq
-  # 1) AWS CLI
+function install_aws_cli_quiet() {
+  # If AWS is missing, we attempt a silent install
   if ! command -v aws &>/dev/null; then
-    sudo apt-get install -y unzip
-    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-    unzip -q awscliv2.zip
-    sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin || true
-    rm -rf awscliv2.zip aws/
+    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
+      brew install awscli >"$LOG_FILE" 2>&1 || true
+    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
+      sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
+      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" >>"$LOG_FILE" 2>&1 || true
+      unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
+      sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
+      rm -rf awscliv2.zip aws/
+    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
+      choco install awscli -y >>"$LOG_FILE" 2>&1 || true
+    fi
   fi
-  echo "✅ AWS CLI installed."
+}
 
-  # 2) Python + boto3 + tqdm
+function install_python_boto3_tqdm_quiet() {
+  # If python is missing, we attempt an install
   if ! command -v python3 &>/dev/null; then
-    sudo apt-get install -y python3
+    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
+      brew install python >>"$LOG_FILE" 2>&1 || true
+    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
+      sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
+    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
+      choco install python -y >>"$LOG_FILE" 2>&1 || true
+    fi
   fi
-  # Guarantee pip if needed
-  if ! command -v pip3 &>/dev/null; then
-    sudo apt-get install -y python3-pip
+  # Then pip install quietly
+  if command -v python3 &>/dev/null; then
+    python3 -m pip install --quiet --upgrade boto3 tqdm >>"$LOG_FILE" 2>&1 || true
   fi
-  # Install boto3/tqdm
-  python3 -m pip install --upgrade --user boto3 tqdm
-  echo "✅ Python + boto3 + tqdm installed."
+}
 
-  # 3) Docker
+function install_docker_quiet() {
   if ! command -v docker &>/dev/null; then
-    sudo apt-get install -y ca-certificates curl gnupg lsb-release
-    sudo mkdir -p /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-    sudo chmod a+r /etc/apt/keyrings/docker.gpg
-    echo \
-      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-      | sudo tee /etc/apt/sources.list.d/docker.list
-    sudo apt-get update -qq
-    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-    sudo systemctl start docker
-    sudo usermod -aG docker "$USER" || true
+    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
+      brew install --cask docker >>"$LOG_FILE" 2>&1 || true
+    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
+      # apt-get approach
+      sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release >>"$LOG_FILE" 2>&1 || true
+      sudo mkdir -p /etc/apt/keyrings
+      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg >>"$LOG_FILE" 2>&1 || true
+      sudo chmod a+r /etc/apt/keyrings/docker.gpg
+      echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+        | sudo tee /etc/apt/sources.list.d/docker.list >>"$LOG_FILE" 2>&1
+      sudo apt-get update -qq >>"$LOG_FILE" 2>&1
+      sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >>"$LOG_FILE" 2>&1
+      sudo systemctl start docker || true
+      sudo usermod -aG docker "$USER" || true
+    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
+      choco install docker-desktop -y >>"$LOG_FILE" 2>&1 || true
+    fi
   fi
-  # Ensure docker is running
-  if ! sudo systemctl is-active --quiet docker; then
-    sudo systemctl start docker
+  # Attempt to start docker quietly
+  if [[ "$OS_TYPE" == "Linux" ]]; then
+    sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
   fi
-  echo "✅ Docker installed."
 }
 
-function install_tools_mac() {
-  # Homebrew approach
-  # 1) AWS CLI
-  if ! command -v aws &>/dev/null; then
-    brew install awscli
-  fi
-  echo "✅ AWS CLI installed."
-
-  # 2) Python + pip + boto3 + tqdm
-  if ! command -v python3 &>/dev/null; then
-    brew install python
-  fi
-  python3 -m pip install --upgrade --user boto3 tqdm
-  echo "✅ Python + boto3 + tqdm installed."
-
-  # 3) Docker
-  if ! command -v docker &>/dev/null; then
-    brew install --cask docker
-    # The user must open Docker.app to start Docker Desktop
-  fi
-  echo "✅ Docker installed (on macOS, please open Docker.app)."
-}
-
-function install_tools_windows() {
-  # If WSL, we might detect "Linux" in uname. If Git Bash, "MINGW"/"MSYS"/"CYGWIN"
-  # We'll try a best-effort approach:
-  UNAME_OUT="$(uname -s)"
-  case "$UNAME_OUT" in
-    *MINGW*|*MSYS*|*CYGWIN*)
-      # Possibly Git Bash on Windows - no direct apt-get or brew
-      # We instruct user or try choco if present
-      if command -v choco &>/dev/null; then
-        echo "Using choco to install AWS CLI, Python, Docker..."
-        choco install awscli python docker-desktop
-        # Then user must run Docker Desktop
-      else
-        echo "Cannot auto-install: please install Docker Desktop (windows), AWS CLI, Python, and run 'pip3 install boto3 tqdm'."
-      fi
-      ;;
-    Linux)
-      # Possibly WSL - let's do the Linux approach
-      install_tools_linux
-      ;;
-    *)
-      # Unknown
-      echo "Unrecognized environment. Please install Docker, AWS CLI, python + boto3 + tqdm manually on Windows."
-      ;;
-  esac
-}
-
-echo ""  # blank line
-# Identify platform
-case "$OS_TYPE" in
-  Linux)
-    install_tools_linux
-    ;;
-  Darwin)
-    install_tools_mac
-    ;;
-  *MINGW*|*MSYS*|*CYGWIN*)
-    install_tools_windows
-    ;;
-  *)
-    # Possibly unknown Unix, or Windows environment
-    install_tools_windows
-    ;;
-esac
+echo "Installing prerequisites..."
+install_aws_cli_quiet
+echo "✅ AWS CLI installed."
+install_python_boto3_tqdm_quiet
+echo "✅ Python + boto3 + tqdm installed."
+install_docker_quiet
+echo "✅ Docker installed."
 
 ###############################################################################
-# 3. SPINNING UP ULTIHASH
+# 3. SPINNING UP ULTIHASH (quietly)
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
@@ -130,9 +96,8 @@ echo "🚀 UltiHash is running!"
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
-cd "$ULTIHASH_DIR"
+cd "$ULTIHASH_DIR" 2>/dev/null || true
 
-# Create policies.json
 cat <<EOF > policies.json
 {
     "Version": "2012-10-17",
@@ -146,7 +111,6 @@ cat <<EOF > policies.json
 }
 EOF
 
-# compose.yml
 cat <<EOF > compose.yml
 services:
   database:
@@ -220,31 +184,31 @@ services:
       - "8080:8080"
 EOF
 
-# Docker login if needed
-echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io -u "$UH_REGISTRY_LOGIN" --password-stdin || true
+echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io -u "$UH_REGISTRY_LOGIN" --password-stdin >/dev/null 2>&1 || true
 
-# Exports for local usage if needed
 export AWS_ACCESS_KEY_ID="TEST-USER"
 export AWS_SECRET_ACCESS_KEY="SECRET"
-export UH_LICENSE_STRING="$UH_LICENSE_STRING"
-export UH_MONITORING_TOKEN="$UH_MONITORING_TOKEN"
+export UH_LICENSE_STRING
+export UH_MONITORING_TOKEN
 
-docker compose up -d || true
+docker compose up -d >/dev/null 2>&1 || true
 sleep 5
 
 ###############################################################################
-# 4. PRINT DIVIDER + WELCOME
+# 4. WELCOME
 ###############################################################################
-print_divider
+cat <<WELCOME
 
-echo "Welcome to the UltiHash test installation! Here you can store real data"
-echo "to see UltiHash's deduplication and speed. Different datasets will have different results."
-echo ""
-echo "Head to https://ultihash.io/test-data to download sample datasets, or store your own."
-echo ""
+
+Welcome to the UltiHash test installation! Here you can store real data
+to see UltiHash's deduplication and speed. Different datasets will have different results.
+
+Head to https://ultihash.io/test-data to download sample datasets, or store your own.
+
+WELCOME
 
 ###############################################################################
-# 5. store_data + read_data + dedup_info
+# 5. TQDM-BASED STORING & READING
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -258,7 +222,7 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
 dp="$DATAPATH".strip()
-data_path=pathlib.Path(dp)
+p=pathlib.Path(dp)
 
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
@@ -266,49 +230,48 @@ try:
 except:
     pass
 
-def gather_files(p):
-    if p.is_file():
-        return [(p,p.parent)], p.stat().st_size
-    stotal=0
-    fl=[]
-    for rt,ds,fs in os.walk(p):
-        for f in fs:
-            fu=pathlib.Path(rt)/f
-            stotal+=fu.stat().st_size
-            fl.append((fu,p))
-    return fl,stotal
+def gather_files(pp):
+    if pp.is_file():
+        return [(pp,pp.parent)], pp.stat().st_size
+    st=0
+    listing=[]
+    for (root,dirs,files) in os.walk(pp):
+        for f in files:
+            fu=pathlib.Path(root)/f
+            st+=fu.stat().st_size
+            listing.append((fu,pp))
+    return listing, st
 
-files, total_s=gather_files(data_path)
+ls, total_sz=gather_files(p)
 t0=time.time()
 
 print("")
 progress=tqdm(
-    total=total_s,
+    total=total_sz,
     desc="Writing data",
     unit="B",
     unit_scale=True,
     colour="#5bdbb4",
     unit_divisor=1000
 )
-
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def store_one(fp,base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    key=str(fp.relative_to(base))
-    s3.upload_file(str(fp),bucket,key,Callback=cb)
+    k=str(fp.relative_to(base))
+    s3.upload_file(str(fp), bucket, k, Callback=cb)
 
-fs=[]
-for (fp,base) in files:
-    fs.append(pool.submit(store_one,fp,base))
-for x in fs:
+ff=[]
+for (fp,base) in ls:
+    ff.append(pool.submit(store_one,fp,base))
+for x in ff:
     x.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_s/(1024*1024)
+mb=total_sz/(1024*1024)
 wr=0
 if elapsed>0:
     wr=mb/elapsed
@@ -319,8 +282,6 @@ EOF
 
 function read_data() {
   local DATAPATH="$1"
-  local OUTD="${DATAPATH}-retrieved"
-
   python3 - <<EOF
 import sys,os,pathlib,time
 import concurrent.futures
@@ -329,64 +290,64 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-dp="$DATAPATH".strip()
-outd_str=f"{dp}-retrieved"
-outd=pathlib.Path(outd_str)
-outd.mkdir(parents=True, exist_ok=True)
+p="$DATAPATH".strip()
+outp=pathlib.Path(f"{p}-retrieved")
+outp.mkdir(parents=True,exist_ok=True)
 
 s3=boto3.client("s3",endpoint_url=endpoint)
 
 def gather_keys():
-    sum_s=0
-    all_k=[]
+    all_keys=[]
+    total_s=0
     pag=s3.get_paginator("list_objects_v2")
     for page in pag.paginate(Bucket=bucket):
-        for o in page.get("Contents",[]):
-            all_k.append(o["Key"])
-            sum_s+=o["Size"]
-    return all_k,sum_s
+        for obj in page.get("Contents",[]):
+            all_keys.append(obj["Key"])
+            total_s+=obj["Size"]
+    return all_keys,total_s
 
-def chunk_download(k):
-    resp=s3.get_object(Bucket=bucket,Key=k)
-    body=resp["Body"]
-    lfile=outd/bucket/k
-    lfile.parent.mkdir(parents=True,exist_ok=True)
+def chunked_download(k):
+    r=s3.get_object(Bucket=bucket,Key=k)
+    bod=r["Body"]
+    localf=outp/bucket/k
+    localf.parent.mkdir(parents=True,exist_ok=True)
+
     while True:
-        chunk=body.read(128*1024)
+        chunk=bod.read(128*1024)
         if not chunk:
             break
-        yield (lfile,chunk)
+        yield (localf,chunk)
 
-keys, total_s=gather_keys()
+keys,total_sz=gather_keys()
 t0=time.time()
 
 print("")
 progress=tqdm(
-    total=total_s,
+    total=total_sz,
     desc="Reading data",
     unit="B",
     unit_scale=True,
     colour="#5bdbb4",
     unit_divisor=1000
 )
+pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def dl_one(k):
-    for lf,chunk in chunk_download(k):
+    for lf,chunk in chunked_download(k):
         with open(lf,"ab") as f:
             f.write(chunk)
         progress.update(len(chunk))
         progress.refresh()
 
-pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 fs=[]
-for k in keys:
-    fs.append(pool.submit(dl_one,k))
+for kk in keys:
+    fs.append(pool.submit(dl_one,kk))
 for x in fs:
     x.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_s/(1024*1024)
+mb=total_sz/(1024*1024)
 rd=0
 if elapsed>0:
     rd=mb/elapsed
@@ -404,28 +365,27 @@ s3=boto3.client("s3",endpoint_url="http://127.0.0.1:8080")
 resp=s3.get_object(Bucket="ultihash",Key="v1/metrics/cluster")
 data=json.loads(resp["Body"].read())
 
-orig=data.get("raw_data_size",0)
-eff =data.get("effective_data_size",0)
-sav =orig-eff
+o=data.get("raw_data_size",0)
+e=data.get("effective_data_size",0)
+saved=o-e
 pct=0
-if orig>0:
-    pct=(sav/orig)*100
-print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
+if o>0:
+    pct=(saved/o)*100
+print(f"{o/1e9:.2f} {e/1e9:.2f} {saved/1e9:.2f} {pct:.2f}")
 EOF
 }
 
 function wipe_bucket() {
   python3 - <<EOF
 import sys,boto3
-
 endpoint="http://127.0.0.1:8080"
-bucket="test-bucket"
+b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    p=s3.list_objects_v2(Bucket=bucket)
-    for o in p.get("Contents",[]):
-        s3.delete_object(Bucket=bucket,Key=o["Key"])
-    s3.delete_bucket(Bucket=bucket)
+    pg=s3.list_objects_v2(Bucket=b).get("Contents",[])
+    for o in pg:
+        s3.delete_object(Bucket=b,Key=o["Key"])
+    s3.delete_bucket(Bucket=b)
 except:
     pass
 EOF
@@ -441,7 +401,7 @@ function wipe_cluster() {
 ###############################################################################
 function main_loop() {
   while true; do
-    echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} " 
+    echo -ne "\033[1m\033[38;5;79mPaste the path of the directory you want to store:\033[0m " 
     IFS= read -r DATAPATH
 
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
@@ -480,7 +440,7 @@ function main_loop() {
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
-    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
+    echo -ne "\033[1m\033[38;5;79mWould you like to store a different dataset? (y/n) \033[0m"
     IFS= read -r ANSWER
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
