@@ -10,7 +10,7 @@ UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsR
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & DIVIDER
+# 1. COLORS & UTILITIES
 ###############################################################################
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
@@ -21,14 +21,14 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # extra blank line before everything
+echo ""  # blank line before everything
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (IN SPECIFIC ORDER)
+# 2. INSTALLING PREREQUISITES (in specified order)
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update package index silently
+# Update
 sudo apt-get update -y -qq > /dev/null 2>&1
 
 # 1) AWS CLI
@@ -53,7 +53,7 @@ if ! python3 -c "import tqdm" 2>/dev/null; then
 fi
 echo "✅ tqdm installed."
 
-# 4) Docker (last)
+# 4) Docker last
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -85,6 +85,7 @@ ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
 cd "$ULTIHASH_DIR"
 
+# policies.json
 cat <<EOF > policies.json
 {
     "Version": "2012-10-17",
@@ -98,6 +99,7 @@ cat <<EOF > policies.json
 }
 EOF
 
+# compose.yml
 cat <<EOF > compose.yml
 services:
   database:
@@ -171,6 +173,7 @@ services:
       - "8080:8080"
 EOF
 
+# Docker login
 echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io \
   -u "$UH_REGISTRY_LOGIN" --password-stdin > /dev/null 2>&1 || true
 
@@ -290,12 +293,6 @@ if not out_dir.exists():
 
 s3=boto3.client("s3", endpoint_url=endpoint)
 
-def list_objs():
-    paginator=s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=bucket):
-        for obj in page.get('Contents',[]):
-            yield obj['Key'], obj['Size']
-
 def chunked_download(key):
     resp=s3.get_object(Bucket=bucket, Key=key)
     body=resp["Body"]
@@ -303,23 +300,26 @@ def chunked_download(key):
     localfile.parent.mkdir(parents=True, exist_ok=True)
 
     while True:
-        chunk=body.read(1024*128)
+        chunk=body.read(1024*128)  # 128KB
         if not chunk:
             break
-        yield chunk
+        yield chunk,localfile
 
-# gather keys
-all_keys=[]
-total_size=0
-paginator=s3.get_paginator('list_objects_v2')
-for page in paginator.paginate(Bucket=bucket):
-    for obj in page.get('Contents',[]):
-        all_keys.append(obj['Key'])
-        total_size+=obj['Size']
+def gather_keys():
+    allk=[]
+    total_s=0
+    paginator=s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=bucket):
+        for o in page.get('Contents',[]):
+            allk.append(o['Key'])
+            total_s += o['Size']
+    return allk,total_s
+
+all_keys,total_size = gather_keys()
 
 start=time.time()
 print("")
-progress=tqdm(
+progress = tqdm(
     total=total_size,
     unit="B",
     unit_scale=True,
@@ -329,10 +329,9 @@ progress=tqdm(
 )
 
 def download_one(k):
-    for chunk in chunked_download(k):
+    for chunk,lf in chunked_download(k):
         progress.update(len(chunk))
-        localf=out_dir/bucket/k
-        with open(localf,'ab') as f:
+        with open(lf,'ab') as f:
             f.write(chunk)
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
@@ -341,8 +340,8 @@ for k in all_keys:
     futs.append(pool.submit(download_one,k))
 for f in futs:
     f.result()
-
 progress.close()
+
 elapsed=time.time()-start
 mb=total_size/(1024*1024)
 read_speed=0
@@ -385,8 +384,8 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 s3=boto3.client("s3", endpoint_url=endpoint)
 try:
-    objs=s3.list_objects_v2(Bucket=bucket).get("Contents",[])
-    for o in objs:
+    pg=s3.list_objects_v2(Bucket=bucket)
+    for o in pg.get('Contents',[]):
         s3.delete_object(Bucket=bucket,Key=o["Key"])
     s3.delete_bucket(Bucket=bucket)
 except:
@@ -414,23 +413,28 @@ function main_loop() {
       continue
     fi
 
-    # 1) Write data (strip trailing newlines)
-    WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
-
-    # BLANK LINE between writing bar and reading bar
+    # (1) Blank line before writing bar
     echo ""
 
-    # 2) Read data (strip trailing newlines)
+    # Write data
+    WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
+
+    # (2) Blank line before reading bar
+    echo ""
+
+    # Read data
     READ_SPEED=$(read_data "$DATAPATH" | tr -d '\r\n')
 
-    # 3) Dedup stats
+    # (3) Blank line before speeds & results
+    echo ""
+
+    # Dedup stats
     DE_INFO=$(dedup_info)
     ORIG_GB=$(echo "$DE_INFO" | awk '{print $1}')
     EFF_GB=$(echo "$DE_INFO"  | awk '{print $2}')
     SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
     PCT=$(echo "$DE_INFO"     | awk '{print $4}')
 
-    echo ""
     echo "➡️ WRITE THROUGHPUT: $WRITE_SPEED MB/s"
     echo "⬅️ READ THROUGHPUT:  $READ_SPEED MB/s"
     echo ""
@@ -441,6 +445,7 @@ function main_loop() {
     echo ""
     echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
     IFS= read -r ANSWER < /dev/tty
+
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
       docker compose down -v > /dev/null 2>&1
       wipe_bucket
