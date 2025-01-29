@@ -2,90 +2,176 @@
 set -e
 
 ###############################################################################
-# 0. QUIET INSTALL (ALL PLATFORMS) + PRE-SUPPLIED CREDENTIALS
+# 0. MACOS DOCKER CHECK + PRE-SUPPLIED CREDENTIALS
 ###############################################################################
+# This block ensures that on macOS, Docker Desktop is installed & running
+# before we do anything else.
+
+OS_TYPE="$(uname -s)"
+
+if [[ "$OS_TYPE" == "Darwin"* ]]; then
+    echo "🔍 Checking Docker on macOS..."
+
+    # 1) Confirm Docker is installed
+    if ! command -v docker &> /dev/null; then
+        echo "❌ Docker is not installed on this Mac!"
+        echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
+        exit 1
+    fi
+
+    # 2) Confirm Docker Desktop is running
+    if ! docker info &>/dev/null; then
+        echo "❌ Docker Desktop is not running!"
+        echo "🏁 Open Docker Desktop, wait for it to start, then press any key to continue..."
+        read -n 1 -s  # Wait for user input silently
+
+        # Re-check
+        if ! docker info &>/dev/null; then
+            echo "❌ Docker Desktop is still not running. Please try again later."
+            exit 1
+        fi
+    fi
+fi
+
+# Now define the credentials + license
 UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
 UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
-# We'll do all advanced stuff quietly:
+###############################################################################
+# 1. COLORS & UTILITIES
+###############################################################################
+BOLD="\033[1m"
+BOLD_TEAL="\033[1m\033[38;5;79m"
+RESET="\033[0m"
+
+function print_divider() {
+  echo ""
+  echo -e "${BOLD_TEAL}────────────────────────────────────────────────────${RESET}"
+  echo ""
+}
+
+echo ""  # blank line before everything
+
+###############################################################################
+# 2. INSTALLING PREREQUISITES (AWS CLI → Python + boto3/tqdm → Docker)
+#    in quiet mode for Linux / Windows. On macOS we already checked Docker above
+###############################################################################
+echo "Installing prerequisites..."
+
 LOG_DIR="$HOME/ultihash-test"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
-OS_TYPE="$(uname -s)"
-
+# We'll define quiet install functions:
 function install_aws_cli_quiet() {
-  # If AWS is missing, we attempt a silent install
   if ! command -v aws &>/dev/null; then
-    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
-      brew install awscli >"$LOG_FILE" 2>&1 || true
-    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
-      sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
-      curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" >>"$LOG_FILE" 2>&1 || true
-      unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
-      sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
-      rm -rf awscliv2.zip aws/
-    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
-      choco install awscli -y >>"$LOG_FILE" 2>&1 || true
-    fi
+    case "$OS_TYPE" in
+      Linux)
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
+          sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" >>"$LOG_FILE" 2>&1 || true
+          unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
+          sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
+          rm -rf awscliv2.zip aws/
+        fi
+        ;;
+      Darwin)
+        if command -v brew &>/dev/null; then
+          brew install awscli >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+      MINGW*|MSYS*|CYGWIN*)
+        if command -v choco &>/dev/null; then
+          choco install awscli -y >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+    esac
   fi
 }
 
 function install_python_boto3_tqdm_quiet() {
-  # If python is missing, we attempt an install
   if ! command -v python3 &>/dev/null; then
-    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
-      brew install python >>"$LOG_FILE" 2>&1 || true
-    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
-      sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
-    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
-      choco install python -y >>"$LOG_FILE" 2>&1 || true
-    fi
+    case "$OS_TYPE" in
+      Linux)
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
+          sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+      Darwin)
+        if command -v brew &>/dev/null; then
+          brew install python >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+      MINGW*|MSYS*|CYGWIN*)
+        if command -v choco &>/dev/null; then
+          choco install python -y >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+    esac
   fi
-  # Then pip install quietly
+  # quietly pip install
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade boto3 tqdm >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
 function install_docker_quiet() {
-  if ! command -v docker &>/dev/null; then
-    if [[ "$OS_TYPE" == "Darwin" && -x "$(command -v brew)" ]]; then
-      brew install --cask docker >>"$LOG_FILE" 2>&1 || true
-    elif [[ "$OS_TYPE" == "Linux" && -x "$(command -v apt-get)" ]]; then
-      # apt-get approach
-      sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release >>"$LOG_FILE" 2>&1 || true
-      sudo mkdir -p /etc/apt/keyrings
-      curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg >>"$LOG_FILE" 2>&1 || true
-      sudo chmod a+r /etc/apt/keyrings/docker.gpg
-      echo \
-        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-        | sudo tee /etc/apt/sources.list.d/docker.list >>"$LOG_FILE" 2>&1
-      sudo apt-get update -qq >>"$LOG_FILE" 2>&1
-      sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >>"$LOG_FILE" 2>&1
-      sudo systemctl start docker || true
-      sudo usermod -aG docker "$USER" || true
-    elif [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* && -x "$(command -v choco)" ]]; then
-      choco install docker-desktop -y >>"$LOG_FILE" 2>&1 || true
-    fi
+  # For Mac we skip because we rely on manual Docker Desktop
+  if [[ "$OS_TYPE" == "Darwin"* ]]; then
+    return
   fi
-  # Attempt to start docker quietly
-  if [[ "$OS_TYPE" == "Linux" ]]; then
+  if ! command -v docker &>/dev/null; then
+    case "$OS_TYPE" in
+      Linux)
+        if command -v apt-get &>/dev/null; then
+          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
+          sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release >>"$LOG_FILE" 2>&1 || true
+          sudo mkdir -p /etc/apt/keyrings
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg >>"$LOG_FILE" 2>&1 || true
+          sudo chmod a+r /etc/apt/keyrings/docker.gpg
+          echo \
+            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+            | sudo tee /etc/apt/sources.list.d/docker.list >>"$LOG_FILE" 2>&1
+          sudo apt-get update -qq >>"$LOG_FILE" 2>&1
+          sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >>"$LOG_FILE" 2>&1
+          sudo systemctl start docker || true
+          sudo usermod -aG docker "$USER" || true
+        fi
+        ;;
+      MINGW*|MSYS*|CYGWIN*)
+        if command -v choco &>/dev/null; then
+          choco install docker-desktop -y >>"$LOG_FILE" 2>&1 || true
+        fi
+        ;;
+    esac
+  fi
+
+  # Attempt to start Docker on Linux
+  if [[ "$OS_TYPE" == "Linux"* ]]; then
     sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
-echo "Installing prerequisites..."
+# Do the quiet installs
 install_aws_cli_quiet
 echo "✅ AWS CLI installed."
+
 install_python_boto3_tqdm_quiet
 echo "✅ Python + boto3 + tqdm installed."
+
 install_docker_quiet
-echo "✅ Docker installed."
+# If on mac, we skip the auto-install
+if [[ "$OS_TYPE" != "Darwin"* ]]; then
+  echo "✅ Docker installed."
+else
+  echo "✅ Docker installed (on macOS, please open Docker.app)."
+fi
 
 ###############################################################################
 # 3. SPINNING UP ULTIHASH (quietly)
@@ -234,13 +320,13 @@ def gather_files(pp):
     if pp.is_file():
         return [(pp,pp.parent)], pp.stat().st_size
     st=0
-    listing=[]
-    for (root,dirs,files) in os.walk(pp):
-        for f in files:
+    files_list=[]
+    for (root,dirs,fils) in os.walk(pp):
+        for f in fils:
             fu=pathlib.Path(root)/f
             st+=fu.stat().st_size
-            listing.append((fu,pp))
-    return listing, st
+            files_list.append((fu,pp))
+    return files_list, st
 
 ls, total_sz=gather_files(p)
 t0=time.time()
@@ -256,18 +342,18 @@ progress=tqdm(
 )
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def store_one(fp,base):
+def do_store(fp,base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    k=str(fp.relative_to(base))
-    s3.upload_file(str(fp), bucket, k, Callback=cb)
+    key=str(fp.relative_to(base))
+    s3.upload_file(str(fp),bucket,key,Callback=cb)
 
-ff=[]
+futures=[]
 for (fp,base) in ls:
-    ff.append(pool.submit(store_one,fp,base))
-for x in ff:
-    x.result()
+    futures.append(pool.submit(do_store,fp,base))
+for fut in futures:
+    fut.result()
 
 progress.close()
 elapsed=time.time()-t0
@@ -290,40 +376,41 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-p="$DATAPATH".strip()
-outp=pathlib.Path(f"{p}-retrieved")
+
+p_str="$DATAPATH".strip()
+outp=pathlib.Path(f"{p_str}-retrieved")
 outp.mkdir(parents=True,exist_ok=True)
 
 s3=boto3.client("s3",endpoint_url=endpoint)
 
 def gather_keys():
-    all_keys=[]
-    total_s=0
+    allk=[]
+    sum_s=0
     pag=s3.get_paginator("list_objects_v2")
     for page in pag.paginate(Bucket=bucket):
-        for obj in page.get("Contents",[]):
-            all_keys.append(obj["Key"])
-            total_s+=obj["Size"]
-    return all_keys,total_s
+        for o in page.get("Contents",[]):
+            allk.append(o["Key"])
+            sum_s+=o["Size"]
+    return allk,sum_s
 
-def chunked_download(k):
+def chunk_download(k):
     r=s3.get_object(Bucket=bucket,Key=k)
-    bod=r["Body"]
-    localf=outp/bucket/k
-    localf.parent.mkdir(parents=True,exist_ok=True)
+    body=r["Body"]
+    lf=outp/bucket/k
+    lf.parent.mkdir(parents=True,exist_ok=True)
 
     while True:
-        chunk=bod.read(128*1024)
+        chunk=body.read(128*1024)
         if not chunk:
             break
-        yield (localf,chunk)
+        yield (lf,chunk)
 
-keys,total_sz=gather_keys()
+keys,total_s=gather_keys()
 t0=time.time()
 
 print("")
 progress=tqdm(
-    total=total_sz,
+    total=total_s,
     desc="Reading data",
     unit="B",
     unit_scale=True,
@@ -332,8 +419,8 @@ progress=tqdm(
 )
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def dl_one(k):
-    for lf,chunk in chunked_download(k):
+def do_download(k):
+    for lf,chunk in chunk_download(k):
         with open(lf,"ab") as f:
             f.write(chunk)
         progress.update(len(chunk))
@@ -341,13 +428,13 @@ def dl_one(k):
 
 fs=[]
 for kk in keys:
-    fs.append(pool.submit(dl_one,kk))
+    fs.append(pool.submit(do_download,kk))
 for x in fs:
     x.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_sz/(1024*1024)
+mb=total_s/(1024*1024)
 rd=0
 if elapsed>0:
     rd=mb/elapsed
@@ -367,24 +454,25 @@ data=json.loads(resp["Body"].read())
 
 o=data.get("raw_data_size",0)
 e=data.get("effective_data_size",0)
-saved=o-e
+sav=o-e
 pct=0
 if o>0:
-    pct=(saved/o)*100
-print(f"{o/1e9:.2f} {e/1e9:.2f} {saved/1e9:.2f} {pct:.2f}")
+    pct=(sav/o)*100
+print(f"{o/1e9:.2f} {e/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
 
 function wipe_bucket() {
   python3 - <<EOF
 import sys,boto3
+
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    pg=s3.list_objects_v2(Bucket=b).get("Contents",[])
-    for o in pg:
-        s3.delete_object(Bucket=b,Key=o["Key"])
+    pg=s3.list_objects_v2(Bucket=b)
+    for ob in pg.get("Contents",[]):
+        s3.delete_object(Bucket=b,Key=ob["Key"])
     s3.delete_bucket(Bucket=b)
 except:
     pass
@@ -397,11 +485,11 @@ function wipe_cluster() {
 }
 
 ###############################################################################
-# 6. MAIN LOOP
+# 6. MAIN LOOP (store → read → results)
 ###############################################################################
 function main_loop() {
   while true; do
-    echo -ne "\033[1m\033[38;5;79mPaste the path of the directory you want to store:\033[0m " 
+    echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
     IFS= read -r DATAPATH
 
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
@@ -413,19 +501,19 @@ function main_loop() {
     # (A) blank line
     echo ""
 
-    # Write data
+    # Write
     WRITE_SPEED="$(store_data "$DATAPATH" | tr -d '\r\n')"
 
     # (B) blank line
     echo ""
 
-    # Read data
+    # Read
     READ_SPEED="$(read_data "$DATAPATH" | tr -d '\r\n')"
 
     # (C) blank line
     echo ""
 
-    # dedup stats
+    # Dedup stats
     DE_INFO="$(dedup_info)"
     ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
     EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
@@ -440,7 +528,7 @@ function main_loop() {
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
-    echo -ne "\033[1m\033[38;5;79mWould you like to store a different dataset? (y/n) \033[0m"
+    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}"
     IFS= read -r ANSWER
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
