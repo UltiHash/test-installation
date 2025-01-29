@@ -21,14 +21,14 @@ function print_divider() {
   echo ""
 }
 
-echo ""  # extra blank line
+echo ""  # extra blank line before everything
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES
+# 2. INSTALLING PREREQUISITES (IN SPECIFIC ORDER)
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update
+# Update package index silently
 sudo apt-get update -y -qq > /dev/null 2>&1
 
 # 1) AWS CLI
@@ -53,7 +53,7 @@ if ! python3 -c "import tqdm" 2>/dev/null; then
 fi
 echo "✅ tqdm installed."
 
-# 4) Docker
+# 4) Docker (last)
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -202,7 +202,7 @@ fi
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
-  python3 - <<EOF
+  python3 - <<EOF | tr -d '\r'
 import sys, os, pathlib, json, time
 import concurrent.futures
 import boto3
@@ -263,9 +263,9 @@ elapsed = time.time() - start_time
 mb=size_total/(1024*1024)
 write_speed = 0
 if elapsed>0:
-    write_speed = mb/elapsed
+    write_speed=mb/elapsed
 
-print(f"{write_speed:.2f}")  # numeric speed
+print(f"{write_speed:.2f}")
 EOF
 }
 
@@ -273,7 +273,7 @@ function read_data() {
   local DATAPATH="$1"
   local OUTPUT_DIR="${DATAPATH}-retrieved"
 
-  python3 - <<EOF
+  python3 - <<EOF 2>/dev/null | tr -d '\r'
 import sys, os, pathlib, time
 import concurrent.futures
 import boto3
@@ -303,26 +303,23 @@ def chunked_download(key):
     localfile.parent.mkdir(parents=True, exist_ok=True)
 
     while True:
-        chunk=body.read(1024*128)  # 128KB chunk
+        chunk=body.read(1024*128)
         if not chunk:
             break
-        yield key, chunk
+        yield chunk
 
-def gather_keys():
-    allkeys=[]
-    total_size=0
-    paginator=s3.get_paginator('list_objects_v2')
-    for page in paginator.paginate(Bucket=bucket):
-        for obj in page.get('Contents',[]):
-            allkeys.append(obj['Key'])
-            total_size += obj['Size']
-    return allkeys,total_size
-
-all_keys,total_size = gather_keys()
+# gather keys
+all_keys=[]
+total_size=0
+paginator=s3.get_paginator('list_objects_v2')
+for page in paginator.paginate(Bucket=bucket):
+    for obj in page.get('Contents',[]):
+        all_keys.append(obj['Key'])
+        total_size+=obj['Size']
 
 start=time.time()
 print("")
-progress = tqdm(
+progress=tqdm(
     total=total_size,
     unit="B",
     unit_scale=True,
@@ -332,9 +329,9 @@ progress = tqdm(
 )
 
 def download_one(k):
-    for key,chunk in chunked_download(k):
+    for chunk in chunked_download(k):
         progress.update(len(chunk))
-        localf=out_dir/bucket/key
+        localf=out_dir/bucket/k
         with open(localf,'ab') as f:
             f.write(chunk)
 
@@ -344,15 +341,15 @@ for k in all_keys:
     futs.append(pool.submit(download_one,k))
 for f in futs:
     f.result()
-progress.close()
 
+progress.close()
 elapsed=time.time()-start
 mb=total_size/(1024*1024)
 read_speed=0
 if elapsed>0:
     read_speed=mb/elapsed
 
-print(f"{read_speed:.2f}")  # numeric speed
+print(f"{read_speed:.2f}")
 EOF
 }
 
@@ -376,7 +373,6 @@ orig_gb=orig/1e9
 eff_gb =eff/1e9
 saved_gb=saved/1e9
 
-# Print 4 numeric vals
 print(f"{orig_gb:.2f} {eff_gb:.2f} {saved_gb:.2f} {pct:.2f}")
 EOF
 }
@@ -387,7 +383,7 @@ import sys,boto3
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-s3=boto3.client("s3",endpoint_url=endpoint)
+s3=boto3.client("s3", endpoint_url=endpoint)
 try:
     objs=s3.list_objects_v2(Bucket=bucket).get("Contents",[])
     for o in objs:
@@ -418,10 +414,14 @@ function main_loop() {
       continue
     fi
 
-    # 1) Write data
-    WRITE_SPEED=$(store_data "$DATAPATH")
-    # 2) Read data
-    READ_SPEED=$(read_data "$DATAPATH")
+    # 1) Write data (strip trailing newlines)
+    WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
+
+    # BLANK LINE between writing bar and reading bar
+    echo ""
+
+    # 2) Read data (strip trailing newlines)
+    READ_SPEED=$(read_data "$DATAPATH" | tr -d '\r\n')
 
     # 3) Dedup stats
     DE_INFO=$(dedup_info)
