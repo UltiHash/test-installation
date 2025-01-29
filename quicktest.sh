@@ -9,7 +9,7 @@ set -e
 
 OS_TYPE="$(uname -s)"
 
-if [[ "$OS_TYPE" == "Darwin"* ]]; then
+if [[ "$OSTYPE" == "darwin"* ]]; then
     echo "🔍 Checking Docker on macOS..."
 
     # 1) Confirm Docker is installed
@@ -22,8 +22,9 @@ if [[ "$OS_TYPE" == "Darwin"* ]]; then
     # 2) Confirm Docker Desktop is running
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
-        echo "🏁 Open Docker Desktop, wait for it to start, then press any key to continue..."
-        read -n 1 -s  # Wait for user input silently
+        echo "🏁 Open Docker Desktop, wait for it to start, then press Enter to continue..."
+        # flush any leftover input
+        read -r  # Wait for the user to press Enter
 
         # Re-check
         if ! docker info &>/dev/null; then
