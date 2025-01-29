@@ -2,25 +2,33 @@
 set -e
 
 ###############################################################################
-# 0. MACOS DOCKER CHECK BEFORE ANYTHING
+# 0. WINDOWS/GIT BASH WARNING
 ###############################################################################
+# If user is on Windows, they must run in Git Bash or WSL, not in normal PowerShell.
+
 OS_TYPE="$(uname -s)"
 
+if [[ "$OS_TYPE" =~ (MINGW|MSYS|CYGWIN).* ]]; then
+    echo "⚠️ On Windows, please run this script from Git Bash or WSL (not PowerShell/CMD)."
+    sleep 2
+fi
+
+###############################################################################
+# 0.1 MACOS DOCKER CHECK (IF APPLICABLE)
+###############################################################################
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
-    # 1) Check Docker installed
+    # 1) Docker installed?
     if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
         echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
         exit 1
     fi
-
-    # 2) Check Docker Desktop is running
+    # 2) Docker running?
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
         echo "Please open Docker Desktop, then press Enter to continue..."
         stty flush 2>/dev/null || true
         read -r < /dev/tty
-
         if ! docker info &>/dev/null; then
             echo "❌ Docker Desktop is still not running. Exiting."
             exit 1
@@ -43,7 +51,7 @@ BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
-trim_trailing_spaces() {
+function trim_trailing_spaces() {
   echo -e "$1" | sed -E 's/[[:space:]]+$//'
 }
 
@@ -290,7 +298,7 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING (COLOUR="cyan")
+# 5. TQDM STORING & READING (COLOR="#5bdbb4" = UltiHash Teal)
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -302,6 +310,7 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
+
 dp="$DATAPATH".rstrip()
 pp=pathlib.Path(dp)
 
@@ -332,10 +341,10 @@ progress = tqdm(
     desc="Writing data",
     unit="B",
     unit_scale=True,
-    colour="cyan",
+    colour="#5bdbb4",
     unit_divisor=1000
 )
-pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_store(fp, base):
     def cb(x):
@@ -371,6 +380,7 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
+
 dp="$DATAPATH".rstrip()
 outp=pathlib.Path(f"{dp}-retrieved")
 outp.mkdir(parents=True, exist_ok=True)
@@ -407,7 +417,7 @@ progress = tqdm(
     desc="Reading data",
     unit="B",
     unit_scale=True,
-    colour="cyan",
+    colour="#5bdbb4",
     unit_divisor=1000
 )
 
@@ -448,11 +458,11 @@ data=json.loads(resp["Body"].read())
 
 orig=data.get("raw_data_size",0)
 eff=data.get("effective_data_size",0)
-saved=orig-eff
+sav=orig-eff
 pct=0
 if orig>0:
-    pct=(saved/orig)*100
-print(f"{orig/1e9:.2f} {eff/1e9:.2f} {saved/1e9:.2f} {pct:.2f}")
+    pct=(sav/orig)*100
+print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
 
@@ -485,6 +495,7 @@ function main_loop() {
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
     IFS= read -r RAW_PATH < /dev/tty
 
+    # Trim trailing spaces + remove surrounding quotes
     RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
     RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
