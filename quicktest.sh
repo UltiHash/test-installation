@@ -24,11 +24,11 @@ function print_divider() {
 echo ""  # blank line before everything
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (in specified order)
+# 2. INSTALLING PREREQUISITES (ORDER: AWS CLI → boto3 → tqdm → Docker)
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update
+# Update silently
 sudo apt-get update -y -qq > /dev/null 2>&1
 
 # 1) AWS CLI
@@ -85,7 +85,6 @@ ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
 cd "$ULTIHASH_DIR"
 
-# policies.json
 cat <<EOF > policies.json
 {
     "Version": "2012-10-17",
@@ -99,7 +98,6 @@ cat <<EOF > policies.json
 }
 EOF
 
-# compose.yml
 cat <<EOF > compose.yml
 services:
   database:
@@ -173,7 +171,6 @@ services:
       - "8080:8080"
 EOF
 
-# Docker login
 echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io \
   -u "$UH_REGISTRY_LOGIN" --password-stdin > /dev/null 2>&1 || true
 
@@ -300,7 +297,7 @@ def chunked_download(key):
     localfile.parent.mkdir(parents=True, exist_ok=True)
 
     while True:
-        chunk=body.read(1024*128)  # 128KB
+        chunk=body.read(1024*128)
         if not chunk:
             break
         yield chunk,localfile
@@ -312,7 +309,7 @@ def gather_keys():
     for page in paginator.paginate(Bucket=bucket):
         for o in page.get('Contents',[]):
             allk.append(o['Key'])
-            total_s += o['Size']
+            total_s+=o['Size']
     return allk,total_s
 
 all_keys,total_size = gather_keys()
@@ -406,26 +403,25 @@ function main_loop() {
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} " > /dev/tty
     IFS= read -r DATAPATH < /dev/tty
 
-    # remove single quotes
     DATAPATH="$(echo "$DATAPATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
     if [[ -z "$DATAPATH" || ! -e "$DATAPATH" ]]; then
       echo "❌ You must provide a valid path. Please try again."
       continue
     fi
 
-    # (1) Blank line before writing bar
+    # (A) blank line
     echo ""
 
     # Write data
     WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
 
-    # (2) Blank line before reading bar
+    # (B) blank line
     echo ""
 
     # Read data
     READ_SPEED=$(read_data "$DATAPATH" | tr -d '\r\n')
 
-    # (3) Blank line before speeds & results
+    # (C) blank line
     echo ""
 
     # Dedup stats
@@ -435,8 +431,8 @@ function main_loop() {
     SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
     PCT=$(echo "$DE_INFO"     | awk '{print $4}')
 
-    echo "➡️ WRITE THROUGHPUT: $WRITE_SPEED MB/s"
-    echo "⬅️ READ THROUGHPUT:  $READ_SPEED MB/s"
+    echo "➡️  WRITE THROUGHPUT: $WRITE_SPEED MB/s"
+    echo "⬅️  READ THROUGHPUT:  $READ_SPEED MB/s"
     echo ""
     echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
     echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
@@ -445,7 +441,6 @@ function main_loop() {
     echo ""
     echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
     IFS= read -r ANSWER < /dev/tty
-
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
       docker compose down -v > /dev/null 2>&1
       wipe_bucket
