@@ -2,8 +2,15 @@
 set -e
 
 ###############################################################################
-# 0. PRE-SUPPLIED CREDENTIALS / LICENSE
+# 0. LOGGING ERRORS + PRE-SUPPLIED CREDENTIALS
 ###############################################################################
+
+# Log all stderr to uh-install-errors.log in $HOME/ultihash-test
+# We'll create that directory first. Then redirect file descriptor 2 there.
+ULTIHASH_DIR="$HOME/ultihash-test"
+mkdir -p "$ULTIHASH_DIR"
+exec 2>>"$ULTIHASH_DIR/uh-install-errors.log"
+
 UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
 UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
@@ -12,6 +19,7 @@ UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 ###############################################################################
 # 1. COLORS & DIVIDER
 ###############################################################################
+BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
@@ -28,51 +36,88 @@ echo ""  # blank line before everything
 ###############################################################################
 echo "Installing prerequisites..."
 
-# Update
-sudo apt-get update -y -qq > /dev/null 2>&1
+OS_TYPE="$(uname -s)"
 
-# 1) AWS CLI
-if ! command -v aws &>/dev/null; then
-  sudo apt-get install -y -qq unzip > /dev/null 2>&1
-  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-  unzip -q awscliv2.zip
-  sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin > /dev/null 2>&1 || true
-  rm -rf awscliv2.zip aws/
-fi
-echo "✅ AWS CLI installed."
+if [[ "$OS_TYPE" == "Darwin" ]]; then
+  # On macOS, we skip apt-get entirely
+  echo "Detected macOS (Darwin). Skipping apt-get steps..."
+  # Just check if docker, aws, python, etc. are installed or not.
+  
+  # 1) AWS CLI
+  if ! command -v aws &>/dev/null; then
+    echo "Please install AWS CLI manually on macOS (brew install awscli) or from official pkg"
+  fi
+  echo "✅ AWS CLI installed."
 
-# 2) boto3
-if ! python3 -c "import boto3" 2>/dev/null; then
-  sudo apt-get install -y -qq python3-boto3 > /dev/null 2>&1
-fi
-echo "✅ boto3 installed."
+  # 2) boto3
+  if ! python3 -c "import boto3" 2>/dev/null; then
+    echo "Please install Python + boto3 on macOS (brew install python; pip3 install boto3)"
+  else
+    echo "✅ boto3 installed."
+  fi
 
-# 3) tqdm
-if ! python3 -c "import tqdm" 2>/dev/null; then
-  sudo apt-get install -y -qq python3-tqdm > /dev/null 2>&1
-fi
-echo "✅ tqdm installed."
+  # 3) tqdm
+  if ! python3 -c "import tqdm" 2>/dev/null; then
+    echo "Please pip3 install tqdm on macOS."
+  else
+    echo "✅ tqdm installed."
+  fi
 
-# 4) Docker last
-if ! command -v docker &>/dev/null; then
-  sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
-  sudo mkdir -p /etc/apt/keyrings
-  curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor \
-    -o /etc/apt/keyrings/docker.gpg > /dev/null 2>&1
-  sudo chmod a+r /etc/apt/keyrings/docker.gpg
-  echo \
-    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-    | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-  sudo apt-get update -qq > /dev/null 2>&1
-  sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin > /dev/null 2>&1
-  sudo systemctl start docker
-  sudo usermod -aG docker "$USER" || true
+  # 4) Docker
+  if ! command -v docker &>/dev/null; then
+    echo "Please install Docker Desktop on macOS from https://docs.docker.com/desktop/install/mac/"
+  else
+    echo "✅ Docker installed."
+  fi
+
+else
+  # Linux path: apt-get
+  # Update silently
+  sudo apt-get update -y -qq > /dev/null 2>&1
+
+  # 1) AWS CLI
+  if ! command -v aws &>/dev/null; then
+    sudo apt-get install -y -qq unzip > /dev/null 2>&1
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -q awscliv2.zip
+    sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin > /dev/null 2>&1 || true
+    rm -rf awscliv2.zip aws/
+  fi
+  echo "✅ AWS CLI installed."
+
+  # 2) boto3
+  if ! python3 -c "import boto3" 2>/dev/null; then
+    sudo apt-get install -y -qq python3-boto3 > /dev/null 2>&1
+  fi
+  echo "✅ boto3 installed."
+
+  # 3) tqdm
+  if ! python3 -c "import tqdm" 2>/dev/null; then
+    sudo apt-get install -y -qq python3-tqdm > /dev/null 2>&1
+  fi
+  echo "✅ tqdm installed."
+
+  # 4) Docker
+  if ! command -v docker &>/dev/null; then
+    sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
+    sudo mkdir -p /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor \
+      -o /etc/apt/keyrings/docker.gpg > /dev/null 2>&1
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+      | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt-get update -qq > /dev/null 2>&1
+    sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin > /dev/null 2>&1
+    sudo systemctl start docker
+    sudo usermod -aG docker "$USER" || true
+  fi
+  if ! sudo systemctl is-active --quiet docker; then
+    sudo systemctl start docker
+  fi
+  echo "✅ Docker installed."
 fi
-if ! sudo systemctl is-active --quiet docker; then
-  sudo systemctl start docker
-fi
-echo "✅ Docker installed."
 
 ###############################################################################
 # 3. SPINNING UP ULTIHASH
@@ -81,10 +126,9 @@ echo ""
 echo "Spinning up UltiHash..."
 echo "🚀 UltiHash is running!"
 
-ULTIHASH_DIR="$HOME/ultihash-test"
-mkdir -p "$ULTIHASH_DIR"
 cd "$ULTIHASH_DIR"
 
+# policies.json
 cat <<EOF > policies.json
 {
     "Version": "2012-10-17",
@@ -98,6 +142,7 @@ cat <<EOF > policies.json
 }
 EOF
 
+# compose.yml
 cat <<EOF > compose.yml
 services:
   database:
@@ -172,14 +217,14 @@ services:
 EOF
 
 echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io \
-  -u "$UH_REGISTRY_LOGIN" --password-stdin > /dev/null 2>&1 || true
+  -u "$UH_REGISTRY_LOGIN" --password-stdin || true
 
 export AWS_ACCESS_KEY_ID="TEST-USER"
 export AWS_SECRET_ACCESS_KEY="SECRET"
 export UH_LICENSE_STRING="$UH_LICENSE_STRING"
 export UH_MONITORING_TOKEN="$UH_MONITORING_TOKEN"
 
-docker compose up -d > /dev/null 2>&1
+docker compose up -d || true
 sleep 5
 
 ###############################################################################
@@ -192,9 +237,14 @@ echo "to see UltiHash's deduplication and speed. Different datasets will have di
 echo ""
 echo "Head to https://ultihash.io/test-data to download sample datasets, or store your own."
 echo ""
+echo "Any errors are logged to: $ULTIHASH_DIR/uh-install-errors.log"
+echo ""
 
-if command -v xdg-open &> /dev/null; then
-  NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/test-data" 2>/dev/null || true
+if command -v open &> /dev/null && [[ "$OS_TYPE" == "Darwin" ]]; then
+  # macOS: open the test data page
+  NO_AT_BRIDGE=1 open "https://ultihash.io/test-data" || true
+elif command -v xdg-open &> /dev/null; then
+  NO_AT_BRIDGE=1 xdg-open "https://ultihash.io/test-data" || true
 fi
 
 ###############################################################################
@@ -202,7 +252,7 @@ fi
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
-  python3 - <<EOF | tr -d '\r'
+  python3 - <<EOF
 import sys, os, pathlib, json, time
 import concurrent.futures
 import boto3
@@ -214,7 +264,7 @@ bucket="test-bucket"
 dp="$DATAPATH".strip()
 data_path=pathlib.Path(dp)
 
-s3=boto3.client("s3", endpoint_url=endpoint)
+s3=boto3.client("s3",endpoint_url=endpoint)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -222,17 +272,17 @@ except:
 
 def gather_files(p):
     if p.is_file():
-        return [(p, p.parent)], p.stat().st_size
+        return [(p,p.parent)], p.stat().st_size
     stotal=0
     fl=[]
-    for root,dirs,files in os.walk(p):
+    for rt,dirs,files in os.walk(p):
         for f in files:
-            fu=pathlib.Path(root)/f
+            fu=pathlib.Path(rt)/f
             stotal+=fu.stat().st_size
             fl.append((fu,p))
     return fl,stotal
 
-files, total_size=gather_files(data_path)
+fls, total_size=gather_files(data_path)
 t0=time.time()
 
 print("")
@@ -247,7 +297,7 @@ progress=tqdm(
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def up_one(fp,base):
+def store_one(fp,base):
     def cb(x):
         progress.update(x)
         progress.refresh()
@@ -255,71 +305,70 @@ def up_one(fp,base):
     s3.upload_file(str(fp),bucket,key,Callback=cb)
 
 fs=[]
-for (fp,base) in files:
-    fs.append(pool.submit(up_one,fp,base))
-for f in fs:
-    f.result()
+for (fp,base) in fls:
+    fs.append(pool.submit(store_one,fp,base))
+for x in fs:
+    x.result()
 
 progress.close()
 elapsed=time.time()-t0
 mb=total_size/(1024*1024)
-write_sp=0
+wr=0
 if elapsed>0:
-    write_sp=mb/elapsed
+    wr=mb/elapsed
 
-print(f"{write_sp:.2f}")
+print(f"{wr:.2f}")
 EOF
 }
 
 function read_data() {
   local DATAPATH="$1"
-  local OUTPUT_DIR="${DATAPATH}-retrieved"
+  local OUTD="${DATAPATH}-retrieved"
 
-  python3 - <<EOF | tr -d '\r'
+  python3 - <<EOF
 import sys,os,pathlib,time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
-import time
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 
 dp="$DATAPATH".strip()
-outdir_str=f"{dp}-retrieved"
-outdir=pathlib.Path(outdir_str)
-outdir.mkdir(parents=True,exist_ok=True)
+outd_str=f"{dp}-retrieved"
+outd=pathlib.Path(outd_str)
+outd.mkdir(parents=True, exist_ok=True)
 
 s3=boto3.client("s3",endpoint_url=endpoint)
 
 def gather_keys():
-    total_s=0
+    sum_s=0
     allk=[]
-    pag=s3.get_paginator('list_objects_v2')
+    pag=s3.get_paginator("list_objects_v2")
     for page in pag.paginate(Bucket=bucket):
         for o in page.get("Contents",[]):
-            allk.append(o['Key'])
-            total_s+=o['Size']
-    return allk,total_s
+            allk.append(o["Key"])
+            sum_s+=o["Size"]
+    return allk,sum_s
 
-def chunked_download(k):
+def chunk_download(k):
     r=s3.get_object(Bucket=bucket,Key=k)
     body=r["Body"]
-    loc=outdir/bucket/k
-    loc.parent.mkdir(parents=True,exist_ok=True)
+    localf=outd/bucket/k
+    localf.parent.mkdir(parents=True, exist_ok=True)
 
     while True:
         chunk=body.read(128*1024)
         if not chunk:
             break
-        yield (loc,chunk)
+        yield (localf,chunk)
 
-keys,total_size=gather_keys()
+kz, total_s=gather_keys()
 t0=time.time()
 
 print("")
 progress=tqdm(
-    total=total_size,
+    total=total_s,
     desc="Reading data",
     unit="B",
     unit_scale=True,
@@ -328,27 +377,27 @@ progress=tqdm(
 )
 
 def dl_one(k):
-    for loc,chunk in chunked_download(k):
-        with open(loc,'ab') as f:
+    for lf,chunk in chunk_download(k):
+        with open(lf,"ab") as f:
             f.write(chunk)
         progress.update(len(chunk))
         progress.refresh()
 
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 fs=[]
-for k in keys:
+for k in kz:
     fs.append(pool.submit(dl_one,k))
 for x in fs:
     x.result()
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_size/(1024*1024)
-read_sp=0
+mb=total_s/(1024*1024)
+rd=0
 if elapsed>0:
-    read_sp=mb/elapsed
+    rd=mb/elapsed
 
-print(f"{read_sp:.2f}")
+print(f"{rd:.2f}")
 EOF
 }
 
@@ -367,7 +416,6 @@ sav =orig-eff
 pct=0
 if orig>0:
     pct=(sav/orig)*100
-
 print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
@@ -380,8 +428,8 @@ endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    p=s3.list_objects_v2(Bucket=bucket)
-    for o in p.get("Contents",[]):
+    it=s3.list_objects_v2(Bucket=bucket)
+    for o in it.get("Contents",[]):
         s3.delete_object(Bucket=bucket,Key=o["Key"])
     s3.delete_bucket(Bucket=bucket)
 except:
@@ -390,7 +438,7 @@ EOF
 }
 
 function wipe_cluster() {
-  docker compose down -v > /dev/null 2>&1 || true
+  docker compose down -v || true
   wipe_bucket
 }
 
@@ -408,27 +456,24 @@ function main_loop() {
       continue
     fi
 
-    # (A) blank line
     echo ""
 
-    # Write bar
+    # Write data
     WRITE_SPEED=$(store_data "$DATAPATH" | tr -d '\r\n')
 
-    # (B) blank line
     echo ""
 
-    # Read bar
+    # Read data
     READ_SPEED=$(read_data "$DATAPATH" | tr -d '\r\n')
 
-    # (C) blank line
     echo ""
 
-    # dedup stats
-    DE_INFO=$(dedup_info)
-    ORIG_GB=$(echo "$DE_INFO" | awk '{print $1}')
-    EFF_GB=$(echo "$DE_INFO"  | awk '{print $2}')
-    SAV_GB=$(echo "$DE_INFO"  | awk '{print $3}')
-    PCT=$(echo "$DE_INFO"     | awk '{print $4}')
+    # Dedup info
+    DI=$(dedup_info)
+    ORIG_GB=$(echo "$DI" | awk '{print $1}')
+    EFF_GB=$(echo "$DI"  | awk '{print $2}')
+    SAV_GB=$(echo "$DI"  | awk '{print $3}')
+    PCT=$(echo "$DI"     | awk '{print $4}')
 
     echo "➡️  WRITE THROUGHPUT: $WRITE_SPEED MB/s"
     echo "⬅️  READ THROUGHPUT:  $READ_SPEED MB/s"
@@ -438,8 +483,10 @@ function main_loop() {
     echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 
     echo ""
-    echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
+    # Bold teal prompt
+    echo -ne "${BOLD_TEAL}${BOLD}Would you like to store a different dataset? (y/n) ${RESET}" > /dev/tty
     IFS= read -r ANSWER < /dev/tty
+
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
       docker compose down -v > /dev/null 2>&1
       wipe_bucket
