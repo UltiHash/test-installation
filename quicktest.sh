@@ -7,23 +7,20 @@ set -e
 OS_TYPE="$(uname -s)"
 
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
-    # 1) Is Docker installed?
+    # 1) Check Docker installed
     if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
         echo "➡️  Download and install Docker Desktop from: https://www.docker.com/products/docker-desktop/"
         exit 1
     fi
 
-    # 2) Is Docker running?
+    # 2) Check Docker Desktop is running
     if ! docker info &>/dev/null; then
         echo "❌ Docker Desktop is not running!"
         echo "Please open Docker Desktop, then press Enter to continue..."
-        # Flush leftover input
         stty flush 2>/dev/null || true
-        # Wait for user to press Enter
         read -r < /dev/tty
 
-        # Re-check
         if ! docker info &>/dev/null; then
             echo "❌ Docker Desktop is still not running. Exiting."
             exit 1
@@ -46,15 +43,8 @@ BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
 RESET="\033[0m"
 
-# Trim trailing spaces function
 trim_trailing_spaces() {
   echo -e "$1" | sed -E 's/[[:space:]]+$//'
-}
-
-function print_divider() {
-  echo ""
-  echo -e "${BOLD_TEAL}────────────────────────────────────────────────────${RESET}"
-  echo ""
 }
 
 ###############################################################################
@@ -68,7 +58,7 @@ mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
-quiet_install_aws_cli() {
+function install_aws_cli_quiet() {
   if ! command -v aws &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
@@ -95,7 +85,7 @@ quiet_install_aws_cli() {
   fi
 }
 
-quiet_install_python() {
+function install_python_quiet() {
   if ! command -v python3 &>/dev/null; then
     case "$OS_TYPE" in
       Darwin)
@@ -118,24 +108,22 @@ quiet_install_python() {
   fi
 }
 
-quiet_install_boto3() {
+function install_boto3_quiet() {
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
-quiet_install_tqdm() {
+function install_tqdm_quiet() {
   if command -v python3 &>/dev/null; then
     python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
   fi
 }
 
-quiet_install_docker() {
-  # On mac, user uses Docker Desktop, skip auto-install
+function install_docker_quiet() {
   if [[ "$OS_TYPE" == "Darwin"* ]]; then
     return
   fi
-
   if ! command -v docker &>/dev/null; then
     case "$OS_TYPE" in
       Linux)
@@ -168,18 +156,17 @@ quiet_install_docker() {
   fi
 }
 
-# Install
-quiet_install_aws_cli
+install_aws_cli_quiet
 echo "✅ AWS CLI installed."
 
-quiet_install_python
-quiet_install_boto3
+install_python_quiet
+install_boto3_quiet
 echo "✅ boto3 installed."
 
-quiet_install_tqdm
+install_tqdm_quiet
 echo "✅ tqdm installed."
 
-quiet_install_docker
+install_docker_quiet
 echo "✅ Docker installed."
 
 ###############################################################################
@@ -303,7 +290,7 @@ Head to https://ultihash.io/test-data to download sample datasets, or store your
 WELCOME
 
 ###############################################################################
-# 5. TQDM STORING & READING (NO COLOR)
+# 5. TQDM STORING & READING (COLOUR="cyan")
 ###############################################################################
 function store_data() {
   local DATAPATH="$1"
@@ -315,11 +302,10 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-
 dp="$DATAPATH".rstrip()
 pp=pathlib.Path(dp)
 
-s3=boto3.client("s3",endpoint_url=endpoint)
+s3=boto3.client("s3", endpoint_url=endpoint)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -337,25 +323,26 @@ def gather_files(basep):
             fl.append((fu, basep))
     return fl, st
 
-files_list, total_size=gather_files(pp)
+files_list, total_sz=gather_files(pp)
 t0=time.time()
 
 print("")
 progress = tqdm(
-    total=total_size,
+    total=total_sz,
     desc="Writing data",
     unit="B",
     unit_scale=True,
+    colour="cyan",
     unit_divisor=1000
 )
-pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
+pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
-def do_store(fp,base):
+def do_store(fp, base):
     def cb(x):
         progress.update(x)
         progress.refresh()
-    key=str(fp.relative_to(base))
-    s3.upload_file(str(fp),bucket,key,Callback=cb)
+    k=str(fp.relative_to(base))
+    s3.upload_file(str(fp), bucket, k, Callback=cb)
 
 futs=[]
 for (fp,bs) in files_list:
@@ -365,7 +352,7 @@ for ft in futs:
 
 progress.close()
 elapsed=time.time()-t0
-mb=total_size/(1024*1024)
+mb=total_sz/(1024*1024)
 wspd=0
 if elapsed>0:
     wspd=mb/elapsed
@@ -384,16 +371,15 @@ from tqdm import tqdm
 
 endpoint="http://127.0.0.1:8080"
 bucket="test-bucket"
-
 dp="$DATAPATH".rstrip()
 outp=pathlib.Path(f"{dp}-retrieved")
-outp.mkdir(parents=True,exist_ok=True)
+outp.mkdir(parents=True, exist_ok=True)
 
 s3=boto3.client("s3", endpoint_url=endpoint)
 
 def gather_keys():
-    allk=[]
     total_s=0
+    allk=[]
     pg=s3.get_paginator("list_objects_v2")
     for page in pg.paginate(Bucket=bucket):
         for obj in page.get("Contents",[]):
@@ -404,14 +390,13 @@ def gather_keys():
 def chunk_download(k):
     resp=s3.get_object(Bucket=bucket,Key=k)
     body=resp["Body"]
-    localf=outp/bucket/k
-    localf.parent.mkdir(parents=True,exist_ok=True)
-
+    lf=outp/bucket/k
+    lf.parent.mkdir(parents=True,exist_ok=True)
     while True:
         chunk=body.read(128*1024)
         if not chunk:
             break
-        yield (localf, chunk)
+        yield (lf, chunk)
 
 keys, total_sz=gather_keys()
 t0=time.time()
@@ -422,8 +407,10 @@ progress = tqdm(
     desc="Reading data",
     unit="B",
     unit_scale=True,
+    colour="cyan",
     unit_divisor=1000
 )
+
 pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
 def do_download(k):
@@ -472,14 +459,13 @@ EOF
 function wipe_bucket() {
   python3 - <<EOF
 import sys,boto3
-
 endpoint="http://127.0.0.1:8080"
 b="test-bucket"
 s3=boto3.client("s3",endpoint_url=endpoint)
 try:
-    listing=s3.list_objects_v2(Bucket=b).get("Contents",[])
-    for ob in listing:
-        s3.delete_object(Bucket=b,Key=ob["Key"])
+    content=s3.list_objects_v2(Bucket=b).get("Contents",[])
+    for o in content:
+        s3.delete_object(Bucket=b,Key=o["Key"])
     s3.delete_bucket(Bucket=b)
 except:
     pass
@@ -487,7 +473,7 @@ EOF
 }
 
 function wipe_cluster() {
-  docker compose down -v || true
+  docker compose down -v >/dev/null 2>&1 || true
   wipe_bucket
 }
 
@@ -499,9 +485,7 @@ function main_loop() {
     echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
     IFS= read -r RAW_PATH < /dev/tty
 
-    # Trim trailing spaces if any
     RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
-    # Also remove quotes if user dragged a folder
     RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
     if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
@@ -535,18 +519,16 @@ function main_loop() {
     IFS= read -r ANSWER < /dev/tty
 
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
-      docker compose down -v || true
-      wipe_bucket
-
+      wipe_cluster
       echo ""
       echo "Preparing the cluster..."
-      docker compose up -d || true
+      docker compose up -d >/dev/null 2>&1 || true
       sleep 5
       echo ""
     else
       echo ""
       echo "Shutting down UltiHash..."
-      docker compose down -v || true
+      docker compose down -v >/dev/null 2>&1 || true
       echo "🌛 UltiHash is offline."
       break
     fi
