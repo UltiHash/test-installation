@@ -17,6 +17,7 @@ RESET="\033[0m"
 
 function print_divider() {
   echo ""
+  # Single continuous box-drawing line
   echo -e "${BOLD_TEAL}────────────────────────────────────────────────────${RESET}"
   echo ""
 }
@@ -28,9 +29,9 @@ echo ""  # extra blank line
 ###############################################################################
 echo "Installing prerequisites..."
 
+# Step A: Docker + AWS CLI + Python
 sudo apt-get update -y -qq > /dev/null 2>&1
 
-# Docker
 if ! command -v docker &>/dev/null; then
   sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release > /dev/null 2>&1
   sudo mkdir -p /etc/apt/keyrings
@@ -51,7 +52,6 @@ if ! sudo systemctl is-active --quiet docker; then
 fi
 echo "✅ Docker installed."
 
-# AWS CLI
 if ! command -v aws &>/dev/null; then
   sudo apt-get install -y -qq unzip > /dev/null 2>&1
   curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
@@ -61,18 +61,18 @@ if ! command -v aws &>/dev/null; then
 fi
 echo "✅ AWS CLI installed."
 
-# Python + boto3 + tqdm
 if ! command -v python3 &>/dev/null; then
   sudo apt-get install -y -qq python3 > /dev/null 2>&1
 fi
 sudo apt-get install -y -qq python3-boto3 python3-tqdm > /dev/null 2>&1
-echo "✅ boto3 installed."
+echo "✅ Python + boto3 + tqdm installed."
 
 ###############################################################################
 # 3. SPINNING UP ULTIHASH
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
+echo ""
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
@@ -175,7 +175,6 @@ export UH_MONITORING_TOKEN="$UH_MONITORING_TOKEN"
 docker compose up -d > /dev/null 2>&1
 sleep 5
 
-echo ""
 echo "🚀 UltiHash is running!"
 
 ###############################################################################
@@ -237,7 +236,7 @@ progress = tqdm(
     total=size_total,
     unit="B",
     unit_scale=True,
-    desc="Storing data",
+    desc="➡️ Writing data",
     unit_divisor=1000,
     colour="#5bdbb4"
 )
@@ -264,8 +263,8 @@ if elapsed>0:
     write_speed=mb/elapsed
 
 print("")
-print(f"✍️ WRITE SPEED: {write_speed:.2f} MB/s")
-
+echo_write = f"➡️ WRITE SPEED: {write_speed:.2f} MB/s"
+print(echo_write)
 EOF
 }
 
@@ -276,7 +275,6 @@ read_data() {
   local OUTPUT_DIR="${DATAPATH}-retrieved"
 
   # We'll run the inline Python snippet for reading. We'll log errors to uh-download-errors.log
-  # so you can troubleshoot on Mac/Windows
   python3 - <<EOF 2>>uh-download-errors.log
 import sys,os,pathlib,json,time
 import concurrent.futures
@@ -301,11 +299,10 @@ def list_objects(buck):
         for obj in page.get('Contents',[]):
             yield obj
 
-def do_download(bucket,key, local_base):
-    # We'll do a direct get_object approach
+def do_download(bucket,key):
     resp=s3.get_object(Bucket=bucket,Key=key)
     body=resp["Body"].read()
-    return key, body
+    return key,body
 
 def gather_keys(buck):
     allkeys=[]
@@ -323,15 +320,14 @@ progress = tqdm(
     total=total_size,
     unit="B",
     unit_scale=True,
-    desc="Retrieving data",
+    desc="⬅️ Reading data",
     unit_divisor=1000,
     colour="#5bdbb4"
 )
 
 def download_one(k):
-    k,keybytes=do_download(bucket,k,out_path)
+    k,keybytes = do_download(bucket,k)
     progress.update(len(keybytes))
-    # Write file
     localfile=out_path/bucket/k
     localfile.parent.mkdir(parents=True, exist_ok=True)
     with open(localfile,'wb') as f:
@@ -352,22 +348,25 @@ if elapsed>0:
     read_speed=mb/elapsed
 
 print("")
-print(f"📥 READ SPEED: {read_speed:.2f} MB/s\n")
+echo_read = f"⬅️ READ SPEED: {read_speed:.2f} MB/s"
+print(echo_read)
 
-# Finally, show dedup stats
+# Then final dedup stats
 resp=s3.get_object(Bucket='ultihash', Key='v1/metrics/cluster')
 data=json.loads(resp['Body'].read())
 
 orig=data.get('raw_data_size',0)
 eff =data.get('effective_data_size',0)
+saved= orig-data.get('effective_data_size',0)
 
 orig_gb=orig/1e9
 eff_gb =eff/1e9
-saved_gb= orig_gb-eff_gb
+saved_gb=saved/1e9
 pct=0
-if orig_gb>0:
-    pct=(saved_gb/orig_gb)*100
+if orig>0:
+    pct=(saved/orig)*100
 
+print("")
 print(f"📦 ORIGINAL SIZE: {orig_gb:,.2f} GB")
 print(f"✨ DEDUPLICATED SIZE: {eff_gb:,.2f} GB")
 print(f"✅ SAVED WITH ULTIHASH: {saved_gb:,.2f} GB ({pct:.2f}%)")
@@ -409,17 +408,16 @@ main_loop() {
       continue
     fi
 
-    # 1) Store data + measure WRITE SPEED
+    # 1) Store (write) data
     store_data "$DATAPATH"
 
-    # 2) Read data from cluster to DATAPATH-retrieved + measure READ SPEED + final dedup stats
+    # 2) Read (download) data
     read_data "$DATAPATH"
 
     echo ""
     echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
     IFS= read -r ANSWER < /dev/tty
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
-      # Wipe cluster + bucket silently
       wipe_cluster
 
       echo ""
