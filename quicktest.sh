@@ -17,7 +17,6 @@ RESET="\033[0m"
 
 function print_divider() {
   echo ""
-  # Single continuous box-drawing line
   echo -e "${BOLD_TEAL}────────────────────────────────────────────────────${RESET}"
   echo ""
 }
@@ -195,11 +194,12 @@ if command -v xdg-open &> /dev/null; then
 fi
 
 ###############################################################################
-# 5. DATASET LOOP
+# 5. WRITE (STORE) & THEN READ (DOWNLOAD)
 ###############################################################################
-store_and_check() {
+store_data() {
   local DATAPATH="$1"
 
+  # We'll run an inline Python snippet to do the storing
   python3 - <<EOF
 import sys, os, pathlib, json, time
 import concurrent.futures
@@ -232,14 +232,14 @@ def gather_files(p):
 files_list, size_total = gather_files(data_path)
 start_time = time.time()
 
-print("")  # extra blank line before progress bar
+print("")
 progress = tqdm(
     total=size_total,
     unit="B",
     unit_scale=True,
     desc="Storing data",
     unit_divisor=1000,
-    colour="#5bdbb4"   # teal-like hex color for the bar
+    colour="#5bdbb4"
 )
 pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 
@@ -259,33 +259,118 @@ progress.close()
 elapsed = time.time() - start_time
 
 mb=size_total/(1024*1024)
-tp=0
+write_speed=0
 if elapsed>0:
-    tp=mb/elapsed
+    write_speed=mb/elapsed
 
 print("")
-print(f"⚡ THROUGHPUT: {tp:.2f} MB/s\n")
+print(f"✍️ WRITE SPEED: {write_speed:.2f} MB/s")
 
-resp = s3.get_object(Bucket='ultihash', Key='v1/metrics/cluster')
-data = json.loads(resp['Body'].read())
+EOF
+}
 
-orig = data.get('raw_data_size', 0)
-eff  = data.get('effective_data_size', 0)
+read_data() {
+  local DATAPATH="$1"
 
-orig_gb = orig/1e9
-eff_gb  = eff/1e9
-saved   = orig_gb - eff_gb
-pct=0.0
+  # We'll append "-retrieved" for the output folder
+  local OUTPUT_DIR="${DATAPATH}-retrieved"
+
+  # We'll run the inline Python snippet for reading. We'll log errors to uh-download-errors.log
+  # so you can troubleshoot on Mac/Windows
+  python3 - <<EOF 2>>uh-download-errors.log
+import sys,os,pathlib,json,time
+import concurrent.futures
+import boto3
+from tqdm import tqdm
+
+endpoint="http://127.0.0.1:8080"
+bucket="test-bucket"
+
+dp="$DATAPATH".strip()
+out_dir="$OUTPUT_DIR".strip()
+out_path=pathlib.Path(out_dir)
+
+if not out_path.exists():
+    out_path.mkdir(parents=True, exist_ok=True)
+
+s3=boto3.client("s3", endpoint_url=endpoint)
+
+def list_objects(buck):
+    paginator=s3.get_paginator('list_objects_v2')
+    for page in paginator.paginate(Bucket=buck):
+        for obj in page.get('Contents',[]):
+            yield obj
+
+def do_download(bucket,key, local_base):
+    # We'll do a direct get_object approach
+    resp=s3.get_object(Bucket=bucket,Key=key)
+    body=resp["Body"].read()
+    return key, body
+
+def gather_keys(buck):
+    allkeys=[]
+    total_size=0
+    for obj in list_objects(buck):
+        allkeys.append(obj['Key'])
+        total_size += obj['Size']
+    return allkeys,total_size
+
+keys, total_size = gather_keys(bucket)
+start=time.time()
+
+print("")
+progress = tqdm(
+    total=total_size,
+    unit="B",
+    unit_scale=True,
+    desc="Retrieving data",
+    unit_divisor=1000,
+    colour="#5bdbb4"
+)
+
+def download_one(k):
+    k,keybytes=do_download(bucket,k,out_path)
+    progress.update(len(keybytes))
+    # Write file
+    localfile=out_path/bucket/k
+    localfile.parent.mkdir(parents=True, exist_ok=True)
+    with open(localfile,'wb') as f:
+        f.write(keybytes)
+
+pool=concurrent.futures.ThreadPoolExecutor(max_workers=8)
+futs=[]
+for k in keys:
+    futs.append(pool.submit(download_one,k))
+for f in futs:
+    f.result()
+progress.close()
+
+elapsed=time.time()-start
+mb=total_size/(1024*1024)
+read_speed=0
+if elapsed>0:
+    read_speed=mb/elapsed
+
+print("")
+print(f"📥 READ SPEED: {read_speed:.2f} MB/s\n")
+
+# Finally, show dedup stats
+resp=s3.get_object(Bucket='ultihash', Key='v1/metrics/cluster')
+data=json.loads(resp['Body'].read())
+
+orig=data.get('raw_data_size',0)
+eff =data.get('effective_data_size',0)
+
+orig_gb=orig/1e9
+eff_gb =eff/1e9
+saved_gb= orig_gb-eff_gb
+pct=0
 if orig_gb>0:
-    pct=(saved/orig_gb)*100
+    pct=(saved_gb/orig_gb)*100
 
 print(f"📦 ORIGINAL SIZE: {orig_gb:,.2f} GB")
 print(f"✨ DEDUPLICATED SIZE: {eff_gb:,.2f} GB")
-print(f"✅ SAVED WITH ULTIHASH: {saved:,.2f} GB ({pct:.2f}%)\n")
-
-print("To unlock your free 10TB license, visit https://ultihash.io/signup 🚀")
-if os.system("command -v xdg-open >/dev/null")==0:
-    os.system("NO_AT_BRIDGE=1 xdg-open https://ultihash.io/signup 2>/dev/null")
+print(f"✅ SAVED WITH ULTIHASH: {saved_gb:,.2f} GB ({pct:.2f}%)")
 EOF
 }
 
@@ -324,12 +409,17 @@ main_loop() {
       continue
     fi
 
-    store_and_check "$DATAPATH"
+    # 1) Store data + measure WRITE SPEED
+    store_data "$DATAPATH"
+
+    # 2) Read data from cluster to DATAPATH-retrieved + measure READ SPEED + final dedup stats
+    read_data "$DATAPATH"
 
     echo ""
     echo -ne "Would you like to store a different dataset? (y/n) " > /dev/tty
     IFS= read -r ANSWER < /dev/tty
     if [[ "$ANSWER" =~ ^[Yy]$ ]]; then
+      # Wipe cluster + bucket silently
       wipe_cluster
 
       echo ""
