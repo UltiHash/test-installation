@@ -464,6 +464,7 @@ EOF
 ###############################################################################
 # 6. SINGLE RUN
 ###############################################################################
+echo ""
 echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
 
@@ -481,7 +482,7 @@ WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 
 # 2. Read data => capture actual read speed
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
-
+echo ""
 # 3. Gather dedup info => parse out orig/eff/saved/pct
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
