@@ -236,25 +236,59 @@ docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
 echo "Waiting for UltiHash cluster to fully start..."
 
-# Replace fixed sleep with a health check loop
-MAX_WAIT=60  # Maximum wait time in seconds
-WAIT_INTERVAL=5
-elapsed=0
+# Implement a spinner for better UX
+function spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf "🔄 Waiting for UltiHash to become healthy... [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\r"
+    done
+}
 
-while true; do
-    if docker compose exec -T entrypoint curl -s http://localhost:8080/health | grep '"status":"healthy"' &>/dev/null; then
-        echo "🚀 UltiHash is running!"
-        break
-    else
-        if [[ $elapsed -ge $MAX_WAIT ]]; then
-            echo "❌ UltiHash failed to start within $MAX_WAIT seconds."
-            exit 1
+# Start health check in background
+(
+    MAX_WAIT=60  # Maximum wait time in seconds
+    WAIT_INTERVAL=2
+    elapsed=0
+
+    while true; do
+        if docker compose exec -T entrypoint curl -s http://localhost:8080/health | grep '"status":"healthy"' &>/dev/null; then
+            echo "🚀 UltiHash is running!"
+            exit 0
+        else
+            if [[ $elapsed -ge $MAX_WAIT ]]; then
+                echo "❌ UltiHash failed to start within $MAX_WAIT seconds."
+                exit 1
+            fi
+            sleep $WAIT_INTERVAL
+            elapsed=$((elapsed + WAIT_INTERVAL))
         fi
-        echo "🔄 Waiting for UltiHash to become healthy... (${elapsed}s elapsed)"
-        sleep $WAIT_INTERVAL
-        elapsed=$((elapsed + WAIT_INTERVAL))
-    fi
-done
+    done
+) &
+
+health_pid=$!
+
+# Start spinner
+spinner $health_pid &
+
+spinner_pid=$!
+
+# Wait for health check to complete
+wait $health_pid
+health_status=$?
+
+# Stop spinner
+kill $spinner_pid 2>/dev/null || true
+wait $spinner_pid 2>/dev/null || true
+
+if [[ $health_status -ne 0 ]]; then
+    exit 1
+fi
 
 ###############################################################################
 # 6. WELCOME
@@ -543,13 +577,37 @@ echo "🧹 Cleaning up..."
 wipe_cluster &
 CLEANUP_PID=$!
 
-# 6. Wait for cleanup to finish with a progress spinner
-echo -n "Waiting for cleanup to complete "
-while kill -0 "$CLEANUP_PID" 2>/dev/null; do
-  echo -n "."
-  sleep 1
-done
-echo " ✅"
+# 6. Wait for cleanup to finish with a spinner
+function cleanup_spinner() {
+    local pid=$1
+    local delay=0.1
+    local spinstr='|/-\'
+    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
+        local temp=${spinstr#?}
+        printf "🧹 Cleaning up... [%c]  " "$spinstr"
+        local spinstr=$temp${spinstr%"$temp"}
+        sleep $delay
+        printf "\r"
+    done
+}
+
+cleanup_spinner $CLEANUP_PID &
+
+spinner_pid=$!
+
+# Wait for cleanup to complete
+wait $CLEANUP_PID
+cleanup_status=$?
+
+# Stop spinner
+kill $spinner_pid 2>/dev/null || true
+wait $spinner_pid 2>/dev/null || true
+
+if [[ $cleanup_status -ne 0 ]]; then
+    echo "❌ Cleanup encountered issues. Please check the log file."
+else
+    echo "✅ Cleanup completed successfully."
+fi
 
 # 7. Delete the entire ultihash-test folder if everything proceeded normally
 rm -rf "$ULTIHASH_DIR"
