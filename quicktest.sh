@@ -321,7 +321,7 @@ start = time.time()
 
 progress = tqdm(
     total=total_sz,
-    desc="Writing data",
+    desc="Writing",
     unit="B",
     unit_scale=True,
     unit_divisor=1024
@@ -386,7 +386,7 @@ start = time.time()
 
 progress = tqdm(
     total=total_sz,
-    desc="Reading data",
+    desc="Reading",
     unit="B",
     unit_scale=True,
     unit_divisor=1024
@@ -468,7 +468,7 @@ EOF
 ###############################################################################
 echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
-
+echo ""
 RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
 RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
@@ -479,12 +479,10 @@ if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
 fi
 
 # 1. Store data => capture actual write speed
-echo ""
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 
 # 2. Read data => capture actual read speed
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
-echo ""
 # 3. Gather dedup info => parse out orig/eff/saved/pct
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
