@@ -12,7 +12,7 @@ show_spinner() {
     local spin_index=0
 
     while kill -0 "$pid" 2>/dev/null; do
-        printf "\r%s [%c]" "$message" "${spinstr:spin_index:1}"
+        printf "\r%s %c" "$message" "${spinstr:spin_index:1}"
         spin_index=$(( (spin_index + 1) % 4 ))
         sleep "$delay"
     done
@@ -451,16 +451,16 @@ PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
 wipe_cluster &
 spin_pid=$!
-show_spinner "$spin_pid" "Generating stats and shutting down the cluster..."
+show_spinner "$spin_pid" "Generating stats and shutting down cluster..."
 
 echo " "
 echo ""
-echo "${BOLD_TEAL}➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
-echo "${BOLD_TEAL}⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
+echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
+echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
 echo ""
-echo "${BOLD_TEAL}📦 ORIGINAL SIZE: ${ORIG_GB} GB"
-echo "${BOLD_TEAL}✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
-echo "${BOLD_TEAL}✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
+echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
+echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
+echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 echo ""
 echo "The UltiHash cluster has been shut down, and the data you stored in it has been wiped. (Your original data remains.)"
 echo "The retrieved copy of the dataset is available in the 'retrieved' folder at ${ULTIHASH_DIR}/retrieved."
