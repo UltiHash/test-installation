@@ -480,7 +480,7 @@ fi
 
 # 1. Store data => capture actual write speed
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
-
+echo ""
 # 2. Read data => capture actual read speed
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
 # 3. Gather dedup info => parse out orig/eff/saved/pct
