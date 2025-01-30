@@ -401,81 +401,42 @@ print(f"{speed:.2f}")
 EOF
 }
 
-# Compare checksums between original path and retrieved path
+###############################################################################
+# 7.5 CHECKSUM VALIDATION (REPLACED PYTHON WITH MD5SUM)
+###############################################################################
 function compare_checksums() {
   local ORIGINAL_PATH="$1"
   local RETRIEVED_DIR="$ULTIHASH_DIR/retrieved"
-  python3 - <<EOF
-import sys, os, hashlib, pathlib
-import concurrent.futures
 
-origp = pathlib.Path("$ORIGINAL_PATH").expanduser().resolve()
-retrp = pathlib.Path("$RETRIEVED_DIR").resolve()
+  local tmp_orig="/tmp/original.md5"
+  local tmp_retr="/tmp/retrieved.md5"
+  local tmp_diff="/tmp/compare_diff.txt"
+  rm -f "$tmp_orig" "$tmp_retr" "$tmp_diff"
 
-def all_files(base):
-    if base.is_file():
-        return [base]
-    out = []
-    for root, dirs, files in os.walk(base):
-        for f in files:
-            out.append(pathlib.Path(root)/f)
-    return out
+  if [[ -d "$ORIGINAL_PATH" ]]; then
+    echo "Computing MD5 checksums for directory: $ORIGINAL_PATH"
+    (cd "$ORIGINAL_PATH" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_orig"
+    (cd "$RETRIEVED_DIR" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_retr"
+  else
+    echo "Computing MD5 checksums for file: $ORIGINAL_PATH"
+    local fbase
+    fbase="$(basename "$ORIGINAL_PATH")"
+    md5sum "$ORIGINAL_PATH" | sed "s|$ORIGINAL_PATH|./$fbase|" > "$tmp_orig"
+    md5sum "$RETRIEVED_DIR/$fbase" | sed "s|$RETRIEVED_DIR/$fbase|./$fbase|" > "$tmp_retr"
+  fi
 
-orig_files = all_files(origp)
-if not orig_files:
-    print("No files found to compare. Possibly an empty directory.")
-    sys.exit(0)
+  diff -u "$tmp_orig" "$tmp_retr" > "$tmp_diff" || true
 
-# Construct a mapping from relative path => original file
-orig_map = {}
-for f in orig_files:
-    rel = f.relative_to(origp)
-    orig_map[rel] = f
-
-def sha256sum(fp):
-    h = hashlib.sha256()
-    with open(fp, "rb") as infile:
-        while True:
-            chunk = infile.read(128*1024)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-# We'll track matches/mismatches
-matches = 0
-mismatches = 0
-
-def check_file(rel):
-    # If not found, mismatch
-    retrieved_file = retrp / rel
-    if not retrieved_file.exists():
-        return False
-    # Compare checksums
-    orig_hash = sha256sum(orig_map[rel])
-    ret_hash  = sha256sum(retrieved_file)
-    return (orig_hash == ret_hash)
-
-with concurrent.futures.ThreadPoolExecutor(max_workers=8) as exe:
-    future_map = {}
-    for rel in orig_map:
-        future_map[exe.submit(check_file, rel)] = rel
-
-    for f in concurrent.futures.as_completed(future_map):
-        if f.result():
-            matches += 1
-        else:
-            mismatches += 1
-
-total = matches + mismatches
-pct_match = 0.0
-if total > 0:
-    pct_match = (matches / total) * 100
-
-print(f"{matches} matched, {mismatches} mismatched, out of {total} files ({pct_match:.1f}% match)")
-EOF
+  if [[ -s "$tmp_diff" ]]; then
+    echo "MD5 CHECKSUM MISMATCHES found. See $tmp_diff for details."
+  else
+    echo "All file checksums match!"
+  fi
 }
 
+###############################################################################
+# 8. ADDITIONAL PYTHON FUNCTION => DEDUP INFO
+###############################################################################
 function dedup_info() {
   python3 - <<EOF
 import sys, json
@@ -514,7 +475,7 @@ EOF
 }
 
 ###############################################################################
-# 8. MAIN LOOP => PROMPT FOR VALID PATH
+# 9. MAIN LOOP => PROMPT FOR VALID PATH
 ###############################################################################
 while true; do
   echo ""
