@@ -269,12 +269,12 @@ cat <<WELCOME
 
 👋 Hi! Welcome to the UltiHash test installation.
 
-Here you can store real data to see UltiHash's deduplication and speed.
+Here you can store real data to test UltiHash's deduplication, as well as read/write performance.
 
 Deduplication can have significantly different results depending on the dataset.
 For best results, try datasets likely to contain repeated data.
 
-You can download benchmark datasets at https://ultihash.io/benchmarks.
+You can download benchmark datasets at ultihash.io/benchmarks.
 
 WELCOME
 
@@ -506,5 +506,5 @@ echo "The UltiHash cluster has been shut down, and the data you stored in it has
 echo "To measure read performance, a copy of the data was placed in ${RAW_PATH}-retrieved."
 echo "Make sure to delete it after checking!"
 echo ""
-echo -e "${BOLD_TEAL}Claim your free 10TB license at https://ultihash.io/sign-up 🚀${RESET}"
+echo -e "${BOLD_TEAL}Claim your free 10TB license at ultihash.io/sign-up 🚀${RESET}"
 echo ""
