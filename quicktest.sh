@@ -261,7 +261,6 @@ export UH_LICENSE_STRING
 export UH_MONITORING_TOKEN
 
 docker compose up -d >/dev/null 2>&1 || true
-sleep 5
 
 ###############################################################################
 # 4. WELCOME (No auto-open)
