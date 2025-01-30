@@ -269,7 +269,7 @@ cat <<WELCOME
 
 👋 Hi! Welcome to the UltiHash test installation.
 
-Here you can store real data to test UltiHash's deduplication, as well as read/write performance.
+Here you can store real data to test deduplication, as well as read/write performance.
 
 Deduplication can have significantly different results depending on the dataset.
 For best results, try datasets likely to contain repeated data.
