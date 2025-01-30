@@ -186,6 +186,10 @@ export UH_MONITORING_TOKEN
 
 docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
+# *** ADD A WAIT HERE to avoid race condition ***
+echo "Waiting for UltiHash cluster to fully start..."
+sleep 15
+
 echo "🚀 UltiHash is running!"
 
 ###############################################################################
@@ -207,8 +211,7 @@ WELCOME
 ###############################################################################
 # 5. PYTHON SCRIPTS (using local venv)
 ###############################################################################
-# The following commands rely on python3 from the venv. We assume "python3" is the same
-# one from $PYENV_DIR/bin/ (due to 'source' above).
+# The following commands rely on python3 from the venv.
 
 function store_data() {
   local DATAPATH="$1"
@@ -226,6 +229,7 @@ pp = pathlib.Path(dp)
 
 s3 = boto3.client("s3", endpoint_url=endpoint)
 
+# Attempt to create the bucket (no fail if it already exists)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -260,6 +264,7 @@ def do_store(fp, base):
         progress.update(x)
         progress.refresh()
     k = str(fp.relative_to(base))
+    # Upload file with a progress callback
     s3.upload_file(str(fp), bucket, k, Callback=cb)
 
 futs = []
