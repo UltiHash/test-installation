@@ -321,7 +321,7 @@ start = time.time()
 
 progress = tqdm(
     total=total_sz,
-    desc="Writing",
+    desc="Writing + deduplicating",
     unit="B",
     unit_scale=True,
     unit_divisor=1024
@@ -386,7 +386,7 @@ start = time.time()
 
 progress = tqdm(
     total=total_sz,
-    desc="Reading",
+    desc="Reconstructing + reading",
     unit="B",
     unit_scale=True,
     unit_divisor=1024
