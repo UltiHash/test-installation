@@ -479,6 +479,7 @@ if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
 fi
 
 # 1. Store data => capture actual write speed
+echo ""
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 
 # 2. Read data => capture actual read speed
