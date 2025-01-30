@@ -235,9 +235,26 @@ export UH_MONITORING_TOKEN
 docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
 echo "Waiting for UltiHash cluster to fully start..."
-sleep 15
 
-echo "🚀 UltiHash is running!"
+# Replace fixed sleep with a health check loop
+MAX_WAIT=60  # Maximum wait time in seconds
+WAIT_INTERVAL=5
+elapsed=0
+
+while true; do
+    if docker compose exec -T entrypoint curl -s http://localhost:8080/health | grep '"status":"healthy"' &>/dev/null; then
+        echo "🚀 UltiHash is running!"
+        break
+    else
+        if [[ $elapsed -ge $MAX_WAIT ]]; then
+            echo "❌ UltiHash failed to start within $MAX_WAIT seconds."
+            exit 1
+        fi
+        echo "🔄 Waiting for UltiHash to become healthy... (${elapsed}s elapsed)"
+        sleep $WAIT_INTERVAL
+        elapsed=$((elapsed + WAIT_INTERVAL))
+    fi
+done
 
 ###############################################################################
 # 6. WELCOME
@@ -413,24 +430,27 @@ function compare_checksums() {
   local tmp_diff="/tmp/compare_diff.txt"
   rm -f "$tmp_orig" "$tmp_retr" "$tmp_diff"
 
+  echo "📁 Computing MD5 checksums..."
+
   if [[ -d "$ORIGINAL_PATH" ]]; then
-    echo "Computing MD5 checksums for directory: $ORIGINAL_PATH"
+    echo "🔄 Processing directory: $ORIGINAL_PATH"
     (cd "$ORIGINAL_PATH" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_orig"
     (cd "$RETRIEVED_DIR" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_retr"
   else
-    echo "Computing MD5 checksums for file: $ORIGINAL_PATH"
+    echo "🔄 Processing file: $ORIGINAL_PATH"
     local fbase
     fbase="$(basename "$ORIGINAL_PATH")"
     md5sum "$ORIGINAL_PATH" | sed "s|$ORIGINAL_PATH|./$fbase|" > "$tmp_orig"
     md5sum "$RETRIEVED_DIR/$fbase" | sed "s|$RETRIEVED_DIR/$fbase|./$fbase|" > "$tmp_retr"
   fi
 
+  echo "🔍 Comparing checksums..."
   diff -u "$tmp_orig" "$tmp_retr" > "$tmp_diff" || true
 
   if [[ -s "$tmp_diff" ]]; then
-    echo "MD5 CHECKSUM MISMATCHES found. See $tmp_diff for details."
+    echo "❌ MD5 CHECKSUM MISMATCHES found. See $tmp_diff for details."
   else
-    echo "All file checksums match!"
+    echo "✅ All file checksums match!"
   fi
 }
 
@@ -496,30 +516,45 @@ while true; do
 done
 
 # 1. Store data => capture actual write speed
+echo "📤 Storing data..."
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 echo ""
 
 # 2. Read data => capture actual read speed
+echo "📥 Reading data..."
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
 echo ""
 
 # 3. Compare checksums => store a summary
-CS_RESULT="$(compare_checksums "$RAW_PATH" | tr -d '\r\n')"
+echo "🔍 Comparing checksums..."
+compare_checksums "$RAW_PATH"
+CS_RESULT="Check completed."
 
 # 4. Gather dedup info => parse out orig/eff/saved/pct
+echo "📊 Gathering deduplication info..."
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
 EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
 SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
 PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
-# 5. Shut down & wipe
-wipe_cluster
+# 5. Shut down & wipe (Run in background)
+echo "🧹 Cleaning up..."
+wipe_cluster &
+CLEANUP_PID=$!
 
-# 6. Delete the entire ultihash-test folder if everything proceeded normally
+# 6. Wait for cleanup to finish with a progress spinner
+echo -n "Waiting for cleanup to complete "
+while kill -0 "$CLEANUP_PID" 2>/dev/null; do
+  echo -n "."
+  sleep 1
+done
+echo " ✅"
+
+# 7. Delete the entire ultihash-test folder if everything proceeded normally
 rm -rf "$ULTIHASH_DIR"
 
-# 7. Print final lines with actual stats
+# 8. Print final lines with actual stats
 echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
