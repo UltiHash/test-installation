@@ -2,10 +2,11 @@
 set -e
 
 ###############################################################################
-# 0. MACOS DOCKER CHECK (IF APPLICABLE)
+# 0. CHECKING DOCKER ON MACOS (IF APPLICABLE)
 ###############################################################################
 OS_TYPE="$(uname -s)"
 
+# If on macOS, verify Docker Desktop is installed & running
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
     if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
@@ -49,112 +50,35 @@ trim_trailing_spaces() {
 }
 
 ###############################################################################
-# 2. INSTALLING PREREQUISITES (QUIET)
+# 2. CHECK PYTHON & CREATE VIRTUAL ENV
 ###############################################################################
-echo ""
-echo "Installing prerequisites..."
+if ! command -v python3 &>/dev/null; then
+  echo "❌ Python 3 is not installed (python3 not found in PATH)."
+  echo "Please install Python 3.6 or higher, then re-run."
+  exit 1
+fi
 
 LOG_DIR="$HOME/ultihash-test"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
-function install_aws_cli_quiet() {
-  if ! command -v aws &>/dev/null; then
-    case "$OS_TYPE" in
-      Darwin)
-        if command -v brew &>/dev/null; then
-          brew install awscli >>"$LOG_FILE" 2>&1 || true
-        fi
-        ;;
-      Linux)
-        if command -v apt-get &>/dev/null; then
-          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
-          sudo apt-get install -y -qq unzip >>"$LOG_FILE" 2>&1 || true
-          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip" >>"$LOG_FILE" 2>&1 || true
-          unzip -q awscliv2.zip >>"$LOG_FILE" 2>&1 || true
-          sudo ./aws/install -i /usr/local/aws-cli -b /usr/local/bin >>"$LOG_FILE" 2>&1 || true
-          rm -rf awscliv2.zip aws/
-        fi
-        ;;
-    esac
-  fi
-}
+echo ""
+echo "Setting up local Python environment..."
+PYENV_DIR="$HOME/ultihash-test/.uh_venv"
 
-function install_python_quiet() {
-  if ! command -v python3 &>/dev/null; then
-    case "$OS_TYPE" in
-      Darwin)
-        if command -v brew &>/dev/null; then
-          brew install python >>"$LOG_FILE" 2>&1 || true
-        fi
-        ;;
-      Linux)
-        if command -v apt-get &>/dev/null; then
-          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
-          sudo apt-get install -y -qq python3 python3-pip >>"$LOG_FILE" 2>&1 || true
-        fi
-        ;;
-    esac
-  fi
-}
+# Create a local virtual environment if not present
+if [[ ! -d "$PYENV_DIR" ]]; then
+  python3 -m venv "$PYENV_DIR" >>"$LOG_FILE" 2>&1
+fi
 
-function install_boto3_quiet() {
-  if command -v python3 &>/dev/null; then
-    python3 -m pip install --quiet --upgrade boto3 >>"$LOG_FILE" 2>&1 || true
-  fi
-}
+# Activate the venv
+# shellcheck source=/dev/null
+source "$PYENV_DIR/bin/activate"
 
-function install_tqdm_quiet() {
-  if command -v python3 &>/dev/null; then
-    python3 -m pip install --quiet --upgrade tqdm >>"$LOG_FILE" 2>&1 || true
-  fi
-}
-
-function install_docker_quiet() {
-  if [[ "$OS_TYPE" == "Darwin"* ]]; then
-    return
-  fi
-
-  if ! command -v docker &>/dev/null; then
-    case "$OS_TYPE" in
-      Linux)
-        if command -v apt-get &>/dev/null; then
-          sudo apt-get update -qq >>"$LOG_FILE" 2>&1 || true
-          sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release >>"$LOG_FILE" 2>&1 || true
-          sudo mkdir -p /etc/apt/keyrings
-          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg >>"$LOG_FILE" 2>&1 || true
-          sudo chmod a+r /etc/apt/keyrings/docker.gpg
-          echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-            $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
-            | sudo tee /etc/apt/sources.list.d/docker.list >>"$LOG_FILE" 2>&1
-          sudo apt-get update -qq >>"$LOG_FILE" 2>&1
-          sudo apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >>"$LOG_FILE" 2>&1
-          sudo systemctl start docker || true
-          sudo usermod -aG docker "$USER" || true
-        fi
-        ;;
-    esac
-  fi
-
-  if [[ "$OS_TYPE" == "Linux"* ]]; then
-    sudo systemctl start docker >>"$LOG_FILE" 2>&1 || true
-  fi
-}
-
-install_aws_cli_quiet
-echo "✅ AWS CLI installed."
-
-install_python_quiet
-install_boto3_quiet
-echo "✅ boto3 installed."
-
-install_tqdm_quiet
-echo "✅ tqdm installed."
-
-install_docker_quiet
-echo "✅ Docker installed."
+# Install packages (boto3, tqdm) locally, no sudo required
+pip install --quiet --upgrade pip boto3 tqdm >>"$LOG_FILE" 2>&1
+echo "✅ Virtual environment ready with boto3 and tqdm installed."
 
 ###############################################################################
 # 3. SPINNING UP ULTIHASH
@@ -252,19 +176,20 @@ services:
       - "8080:8080"
 EOF
 
-echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io -u "$UH_REGISTRY_LOGIN" --password-stdin >/dev/null 2>&1 || true
+# Log in to the registry quietly
+echo "$UH_REGISTRY_PASSWORD" | docker login registry.ultihash.io -u "$UH_REGISTRY_LOGIN" --password-stdin >>"$LOG_FILE" 2>&1 || true
 
 export AWS_ACCESS_KEY_ID="TEST-USER"
 export AWS_SECRET_ACCESS_KEY="SECRET"
 export UH_LICENSE_STRING
 export UH_MONITORING_TOKEN
 
-docker compose up -d >/dev/null 2>&1 || true
+docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
 echo "🚀 UltiHash is running!"
 
 ###############################################################################
-# 4. WELCOME (No auto-open)
+# 4. WELCOME
 ###############################################################################
 cat <<WELCOME
 
@@ -280,10 +205,11 @@ You can download benchmark datasets at ultihash.io/benchmarks.
 WELCOME
 
 ###############################################################################
-# 5. PYTHON FUNCTIONS
+# 5. PYTHON SCRIPTS (using local venv)
 ###############################################################################
+# The following commands rely on python3 from the venv. We assume "python3" is the same
+# one from $PYENV_DIR/bin/ (due to 'source' above).
 
-# Store data in test-bucket, measure total bytes, compute + print MB/s
 function store_data() {
   local DATAPATH="$1"
   python3 - <<EOF
@@ -353,7 +279,6 @@ print(f"{speed:.2f}")
 EOF
 }
 
-# Read data from test-bucket, measure total bytes, compute + print MB/s
 function read_data() {
   local DATAPATH="$1"
   python3 - <<EOF
@@ -425,7 +350,6 @@ print(f"{speed:.2f}")
 EOF
 }
 
-# Gather dedup info from local cluster metrics
 function dedup_info() {
   python3 - <<EOF
 import sys, json
@@ -445,9 +369,8 @@ print(f"{orig/1e9:.2f} {eff/1e9:.2f} {sav/1e9:.2f} {pct:.2f}")
 EOF
 }
 
-# Wipe cluster (docker + local test-bucket)
 function wipe_cluster() {
-  docker compose down -v >/dev/null 2>&1 || true
+  docker compose down -v >>"$LOG_FILE" 2>&1 || true
   python3 - <<EOF
 import sys, boto3
 
@@ -467,23 +390,27 @@ EOF
 ###############################################################################
 # 6. SINGLE RUN
 ###############################################################################
+echo ""
 echo -ne "${BOLD_TEAL}Paste the path of the directory you want to test:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
 echo ""
+
 RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
 RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
 
 if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
   echo "❌ You must provide a valid path. Exiting."
-  docker compose down -v >/dev/null 2>&1 || true
+  docker compose down -v >>"$LOG_FILE" 2>&1 || true
   exit 1
 fi
 
 # 1. Store data => capture actual write speed
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 echo ""
+
 # 2. Read data => capture actual read speed
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
+
 # 3. Gather dedup info => parse out orig/eff/saved/pct
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
