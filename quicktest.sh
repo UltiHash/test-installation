@@ -321,7 +321,7 @@ start = time.time()
 
 progress = tqdm(
     total=total_sz,
-    desc="Writing + deduplicating",
+    desc="Deduplicating + writing",
     unit="B",
     unit_scale=True,
     unit_divisor=1024
