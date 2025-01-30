@@ -161,7 +161,6 @@ echo "✅ Docker installed."
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
-echo "🚀 UltiHash is running!"
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 mkdir -p "$ULTIHASH_DIR"
@@ -261,6 +260,8 @@ export UH_LICENSE_STRING
 export UH_MONITORING_TOKEN
 
 docker compose up -d >/dev/null 2>&1 || true
+
+echo "🚀 UltiHash is running!"
 
 ###############################################################################
 # 4. WELCOME (No auto-open)
