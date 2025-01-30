@@ -3,6 +3,22 @@
 set -e
 trap 'echo "❌ Something unexpected happened. Please check the log file at $LOG_FILE"; exit 1' ERR
 
+# Spinner Function
+show_spinner() {
+    local pid=$1
+    local message=$2
+    local spinstr='|/-\'
+    local delay=0.1
+    local spin_index=0
+
+    while kill -0 "$pid" 2>/dev/null; do
+        printf "\r%s [%c]" "$message" "${spinstr:spin_index:1}"
+        spin_index=$(( (spin_index + 1) % 4 ))
+        sleep "$delay"
+    done
+    printf "\r%s ✅" "$message"
+}
+
 OS_TYPE="$(uname -s)"
 
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
@@ -54,7 +70,7 @@ LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
 echo ""
-echo "Setting up local Python environment..."
+show_spinner "$spin_pid" "Setting up local Python environment for this test..."
 PYENV_DIR="$HOME/ultihash-test/.uh_venv"
 
 if [[ ! -d "$PYENV_DIR" ]]; then
@@ -64,10 +80,8 @@ fi
 source "$PYENV_DIR/bin/activate"
 
 pip install --quiet --upgrade pip boto3 tqdm >>"$LOG_FILE" 2>&1
-echo "✅ Virtual environment ready with boto3 and tqdm installed."
 
 echo ""
-echo "Spinning up UltiHash..."
 
 ULTIHASH_DIR="$HOME/ultihash-test"
 cd "$ULTIHASH_DIR"
@@ -210,10 +224,11 @@ export UH_MONITORING_TOKEN
 
 docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
-echo "Waiting for UltiHash cluster to fully start..."
-sleep 15
+sleep 15 &
+spin_pid=$!
+show_spinner "$spin_pid" "Spinning up UltiHash cluster with Docker..."
 
-echo "🚀 UltiHash is running!"
+echo " "
 
 cat <<WELCOME
 
@@ -434,8 +449,12 @@ EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
 SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
 PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
-wipe_cluster
+wipe_cluster &
+spin_pid=$!
+show_spinner "$spin_pid" "Generating stats and shutting down the cluster..."
 
+echo " "
+echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
 echo ""
@@ -443,8 +462,8 @@ echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
 echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
 echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 echo ""
-echo "The UltiHash cluster has been shut down, and all data inside has been wiped. (Your original dataset remains.)"
-echo "The copy that was read from the cluster is at ${ULTIHASH_DIR}/retrieved."
+echo "The UltiHash cluster has been shut down, and the data you stored in it has been wiped. (Your original data remains.)"
+echo "Your read copy is available in the 'retrieved' folder at ${ULTIHASH_DIR}/retrieved."
 echo ""
 echo -e "${BOLD_TEAL}Claim your free 10TB license at ultihash.io/sign-up 🚀${RESET}"
 echo ""
