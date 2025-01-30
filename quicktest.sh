@@ -37,10 +37,11 @@ fi
 ###############################################################################
 # 2. PRE-SUPPLIED CREDENTIALS / LICENSE
 ###############################################################################
-UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
-UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
+UH_REGISTRY_LOGIN="demo"
+UH_REGISTRY_PASSWORD="M_X!DFlE@jf1:Ztl"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
-UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
+UH_MONITORING_TOKEN="mQRQeeYoGVXHNE0i"
+UH_CLUSTER_ID=$(uuidgen)
 
 ###############################################################################
 # 3. COLORS & UTILITIES
@@ -107,6 +108,41 @@ cat <<EOF > policies.json
 }
 EOF
 
+cat <<EOF > collector.yaml
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: '0.0.0.0:4317'
+      http:
+
+processors:
+  batch:
+    send_batch_size: 50
+    timeout: 2s  
+  attributes/metrics:
+    actions:
+     - key: ultihash_cluster_id
+       action: insert
+       value: "${UH_CLUSTER_ID}"
+
+exporters:
+  debug: {}
+  otlphttp/uptrace:
+    endpoint: https://collector.ultihash.io
+    headers: { 'uptrace-dsn': https://${UH_MONITORING_TOKEN}@collector.ultihash.io }
+
+service:
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [attributes/metrics, batch]
+      exporters: [otlphttp/uptrace, debug]
+    logs:
+      receivers: [otlp]
+      exporters: [debug]
+EOF
+
 cat <<EOF > compose.yml
 services:
   database:
@@ -145,8 +181,9 @@ services:
       - etcd
     environment:
       UH_LICENSE: ${UH_LICENSE_STRING}
-      UH_LOG_LEVEL: INFO
-      UH_MONITORING_TOKEN: ${UH_MONITORING_TOKEN}
+      UH_LOG_LEVEL: WARN
+      UH_OTEL_ENDPOINT: http://collector:4317
+      UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 storage"]
 
   deduplicator:
@@ -156,8 +193,9 @@ services:
       - storage
     environment:
       UH_LICENSE: ${UH_LICENSE_STRING}
-      UH_LOG_LEVEL: INFO
-      UH_MONITORING_TOKEN: ${UH_MONITORING_TOKEN}
+      UH_LOG_LEVEL: WARN
+      UH_OTEL_ENDPOINT: http://collector:4317
+      UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 deduplicator"]
 
   entrypoint:
@@ -168,16 +206,22 @@ services:
       - deduplicator
     environment:
       UH_LICENSE: ${UH_LICENSE_STRING}
-      UH_LOG_LEVEL: INFO
-      UH_MONITORING_TOKEN: ${UH_MONITORING_TOKEN}
+      UH_LOG_LEVEL: WARN
       UH_DB_HOSTPORT: database:5432
       UH_DB_USER: postgres
       UH_DB_PASS: uh
+      UH_OTEL_ENDPOINT: http://collector:4317
+      UH_OTEL_INTERVAL: 1000
     volumes:
       - ./policies.json:/etc/uh/policies.json
     command: ["/usr/bin/bash", "-l", "-c", "sleep 15 && uh-cluster --registry etcd:2379 entrypoint"]
     ports:
       - "8080:8080"
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.118.0
+    volumes:
+      - ./collector.yaml:/etc/otelcol-contrib/config.yaml
 EOF
 
 # Log in to the registry quietly
