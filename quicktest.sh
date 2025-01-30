@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
-set -e
 
 ###############################################################################
-# 0. CHECKING DOCKER ON MACOS (IF APPLICABLE)
+# 0. TRAP ANY UNEXPECTED ERRORS => Show log file path, then exit.
+###############################################################################
+set -e
+trap 'echo "❌ Something unexpected happened. Please check the log file at $LOG_FILE"; exit 1' ERR
+
+###############################################################################
+# 1. CHECK DOCKER ON MAC (IF APPLICABLE)
 ###############################################################################
 OS_TYPE="$(uname -s)"
 
-# If on macOS, verify Docker Desktop is installed & running
 if [[ "$OS_TYPE" == "Darwin"* ]]; then
     if ! command -v docker &>/dev/null; then
         echo "❌ Docker is not installed on this Mac!"
@@ -31,7 +35,7 @@ if [[ "$OS_TYPE" == "Darwin"* ]]; then
 fi
 
 ###############################################################################
-# PRE-SUPPLIED CREDENTIALS / LICENSE
+# 2. PRE-SUPPLIED CREDENTIALS / LICENSE
 ###############################################################################
 UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
 UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
@@ -39,7 +43,7 @@ UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsR
 UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
 
 ###############################################################################
-# 1. COLORS & UTILITIES
+# 3. COLORS & UTILITIES
 ###############################################################################
 BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
@@ -50,7 +54,7 @@ trim_trailing_spaces() {
 }
 
 ###############################################################################
-# 2. CHECK PYTHON & CREATE VIRTUAL ENV
+# 4. CHECK PYTHON & CREATE VIRTUAL ENV (NO SUDO)
 ###############################################################################
 if ! command -v python3 &>/dev/null; then
   echo "❌ Python 3 is not installed (python3 not found in PATH)."
@@ -58,13 +62,14 @@ if ! command -v python3 &>/dev/null; then
   exit 1
 fi
 
+# Keep logs in a known location
 LOG_DIR="$HOME/ultihash-test"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
 echo ""
-echo "Setting up local Python environment..."
+echo "Setting up local Python environment (no sudo required)..."
 PYENV_DIR="$HOME/ultihash-test/.uh_venv"
 
 # Create a local virtual environment if not present
@@ -76,18 +81,17 @@ fi
 # shellcheck source=/dev/null
 source "$PYENV_DIR/bin/activate"
 
-# Install packages (boto3, tqdm) locally, no sudo required
+# Install packages in venv => no system-wide changes
 pip install --quiet --upgrade pip boto3 tqdm >>"$LOG_FILE" 2>&1
 echo "✅ Virtual environment ready with boto3 and tqdm installed."
 
 ###############################################################################
-# 3. SPINNING UP ULTIHASH
+# 5. SPINNING UP ULTIHASH
 ###############################################################################
 echo ""
 echo "Spinning up UltiHash..."
 
-ULTIHASH_DIR="$HOME/ultihash-test"
-mkdir -p "$ULTIHASH_DIR"
+ULTIHASH_DIR="$HOME/ultihash-test"  # We'll remove this directory at the end if all goes well.
 cd "$ULTIHASH_DIR"
 
 cat <<EOF > policies.json
@@ -186,14 +190,13 @@ export UH_MONITORING_TOKEN
 
 docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
-# *** ADD A WAIT HERE to avoid race condition ***
 echo "Waiting for UltiHash cluster to fully start..."
 sleep 15
 
 echo "🚀 UltiHash is running!"
 
 ###############################################################################
-# 4. WELCOME
+# 6. WELCOME
 ###############################################################################
 cat <<WELCOME
 
@@ -209,9 +212,9 @@ You can download benchmark datasets at ultihash.io/benchmarks.
 WELCOME
 
 ###############################################################################
-# 5. PYTHON SCRIPTS (using local venv)
+# 7. PYTHON SCRIPTS (store, read, dedup, verify)
 ###############################################################################
-# The following commands rely on python3 from the venv.
+# We'll place the read copy in $ULTIHASH_DIR/retrieved instead of next to original.
 
 function store_data() {
   local DATAPATH="$1"
@@ -221,15 +224,14 @@ import concurrent.futures
 import boto3
 from tqdm import tqdm
 
-endpoint="http://127.0.0.1:8080"
-bucket="test-bucket"
+endpoint = "http://127.0.0.1:8080"
+bucket = "test-bucket"
 
-dp="$DATAPATH".rstrip()
+dp = "$DATAPATH".rstrip()
 pp = pathlib.Path(dp)
 
 s3 = boto3.client("s3", endpoint_url=endpoint)
 
-# Attempt to create the bucket (no fail if it already exists)
 try:
     s3.create_bucket(Bucket=bucket)
 except:
@@ -264,7 +266,6 @@ def do_store(fp, base):
         progress.update(x)
         progress.refresh()
     k = str(fp.relative_to(base))
-    # Upload file with a progress callback
     s3.upload_file(str(fp), bucket, k, Callback=cb)
 
 futs = []
@@ -286,17 +287,18 @@ EOF
 
 function read_data() {
   local DATAPATH="$1"
+  local READ_OUT_DIR="$ULTIHASH_DIR/retrieved"  # Put retrieved data here
   python3 - <<EOF
 import sys, os, pathlib, time
 import concurrent.futures
 import boto3
 from tqdm import tqdm
 
-endpoint="http://127.0.0.1:8080"
-bucket="test-bucket"
+endpoint = "http://127.0.0.1:8080"
+bucket = "test-bucket"
 
-dp="$DATAPATH".rstrip()
-outp = pathlib.Path(f"{dp}-retrieved")
+dp = "$DATAPATH".rstrip()
+outp = pathlib.Path("$READ_OUT_DIR")
 outp.mkdir(parents=True, exist_ok=True)
 
 s3 = boto3.client("s3", endpoint_url=endpoint)
@@ -326,7 +328,7 @@ progress = tqdm(
 def download_object(k):
     resp = s3.get_object(Bucket=bucket, Key=k)
     body = resp["Body"]
-    lf = outp / bucket / k
+    lf = outp / k  # same structure, but in retrieved folder
     lf.parent.mkdir(parents=True, exist_ok=True)
     while True:
         chunk = body.read(128 * 1024)
@@ -352,6 +354,81 @@ if elapsed > 0:
     speed = mb / elapsed
 
 print(f"{speed:.2f}")
+EOF
+}
+
+# Compare checksums between original path and retrieved path
+function compare_checksums() {
+  local ORIGINAL_PATH="$1"
+  local RETRIEVED_DIR="$ULTIHASH_DIR/retrieved"
+  python3 - <<EOF
+import sys, os, hashlib, pathlib
+import concurrent.futures
+
+origp = pathlib.Path("$ORIGINAL_PATH").expanduser().resolve()
+retrp = pathlib.Path("$RETRIEVED_DIR").resolve()
+
+def all_files(base):
+    if base.is_file():
+        return [base]
+    out = []
+    for root, dirs, files in os.walk(base):
+        for f in files:
+            out.append(pathlib.Path(root)/f)
+    return out
+
+orig_files = all_files(origp)
+if not orig_files:
+    print("No files found to compare. Possibly an empty directory.")
+    sys.exit(0)
+
+# Construct a mapping from relative path => original file
+orig_map = {}
+for f in orig_files:
+    rel = f.relative_to(origp)
+    orig_map[rel] = f
+
+def sha256sum(fp):
+    h = hashlib.sha256()
+    with open(fp, "rb") as infile:
+        while True:
+            chunk = infile.read(128*1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+# We'll track matches/mismatches
+matches = 0
+mismatches = 0
+
+def check_file(rel):
+    # If not found, mismatch
+    retrieved_file = retrp / rel
+    if not retrieved_file.exists():
+        return False
+    # Compare checksums
+    orig_hash = sha256sum(orig_map[rel])
+    ret_hash  = sha256sum(retrieved_file)
+    return (orig_hash == ret_hash)
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as exe:
+    future_map = {}
+    for rel in orig_map:
+        future_map[exe.submit(check_file, rel)] = rel
+
+    for f in concurrent.futures.as_completed(future_map):
+        if f.result():
+            matches += 1
+        else:
+            mismatches += 1
+
+total = matches + mismatches
+pct_match = 0.0
+if total > 0:
+    pct_match = (matches / total) * 100
+
+print(f"{matches} matched, {mismatches} mismatched, out of {total} files ({pct_match:.1f}% match)")
 EOF
 }
 
@@ -393,21 +470,25 @@ EOF
 }
 
 ###############################################################################
-# 6. SINGLE RUN
+# 8. MAIN LOOP => PROMPT FOR VALID PATH
 ###############################################################################
-echo ""
-echo -ne "${BOLD_TEAL}Paste the path of the directory you want to test:${RESET} "
-IFS= read -r RAW_PATH < /dev/tty
-echo ""
+while true; do
+  echo ""
+  echo -ne "${BOLD_TEAL}Paste the path of the directory you want to test:${RESET} "
+  IFS= read -r RAW_PATH < /dev/tty
+  echo ""
 
-RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
-RAW_PATH="$(echo "$RAW_PATH" | sed -E "s|^[[:space:]]*'(.*)'[[:space:]]*\$|\1|")"
+  RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
+  # Expand ~ in the path
+  RAW_PATH="$(eval echo "$RAW_PATH")"
 
-if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
-  echo "❌ You must provide a valid path. Exiting."
-  docker compose down -v >>"$LOG_FILE" 2>&1 || true
-  exit 1
-fi
+  if [[ -z "$RAW_PATH" || ! -e "$RAW_PATH" ]]; then
+    echo "❌ Path '$RAW_PATH' is not valid. Please try again."
+    continue
+  else
+    break
+  fi
+done
 
 # 1. Store data => capture actual write speed
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
@@ -415,29 +496,37 @@ echo ""
 
 # 2. Read data => capture actual read speed
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
+echo ""
 
-# 3. Gather dedup info => parse out orig/eff/saved/pct
+# 3. Compare checksums => store a summary
+CS_RESULT="$(compare_checksums "$RAW_PATH" | tr -d '\r\n')"
+
+# 4. Gather dedup info => parse out orig/eff/saved/pct
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
 EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
 SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
 PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
-# 4. Shut down & wipe
+# 5. Shut down & wipe
 wipe_cluster
 
-# 5. Print final lines with actual stats
+# 6. Delete the entire ultihash-test folder if everything proceeded normally
+rm -rf "$ULTIHASH_DIR"
+
+# 7. Print final lines with actual stats
 echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
+echo ""
+echo "🔎 CHECKSUM RESULTS: ${CS_RESULT}"
 echo ""
 echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
 echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
 echo "✅ SAVED WITH ULTIHASH: ${SAV_GB} GB (${PCT}%)"
 echo ""
 echo "The UltiHash cluster has been shut down, and the data you stored in it has been wiped."
-echo "To measure read performance, a copy of the data was placed in ${RAW_PATH}-retrieved."
-echo "Make sure to delete it after checking!"
+echo "Your read copy (for verifying correctness) was placed in an internal folder, which we've also removed now."
 echo ""
 echo -e "${BOLD_TEAL}Claim your free 10TB license at ultihash.io/sign-up 🚀${RESET}"
 echo ""
