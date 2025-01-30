@@ -54,7 +54,7 @@ LOG_FILE="$LOG_DIR/install-silent.log"
 touch "$LOG_FILE"
 
 echo ""
-echo "Setting up local Python environment (no sudo required)..."
+echo "Setting up local Python environment..."
 PYENV_DIR="$HOME/ultihash-test/.uh_venv"
 
 if [[ ! -d "$PYENV_DIR" ]]; then
