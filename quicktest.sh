@@ -466,7 +466,7 @@ EOF
 ###############################################################################
 # 6. SINGLE RUN
 ###############################################################################
-echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
+echo -ne "${BOLD_TEAL}Paste the path of the directory you want to test:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
 echo ""
 RAW_PATH="$(trim_trailing_spaces "$RAW_PATH")"
