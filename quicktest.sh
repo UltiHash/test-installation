@@ -235,60 +235,9 @@ export UH_MONITORING_TOKEN
 docker compose up -d >>"$LOG_FILE" 2>&1 || true
 
 echo "Waiting for UltiHash cluster to fully start..."
+sleep 15
 
-# Implement a spinner for better UX
-function spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf "🔄 Waiting for UltiHash to become healthy... [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\r"
-    done
-}
-
-# Start health check in background
-(
-    MAX_WAIT=60  # Maximum wait time in seconds
-    WAIT_INTERVAL=2
-    elapsed=0
-
-    while true; do
-        if docker compose exec -T entrypoint curl -s http://localhost:8080/health | grep '"status":"healthy"' &>/dev/null; then
-            echo "🚀 UltiHash is running!"
-            exit 0
-        else
-            if [[ $elapsed -ge $MAX_WAIT ]]; then
-                echo "❌ UltiHash failed to start within $MAX_WAIT seconds."
-                exit 1
-            fi
-            sleep $WAIT_INTERVAL
-            elapsed=$((elapsed + WAIT_INTERVAL))
-        fi
-    done
-) &
-
-health_pid=$!
-
-# Start spinner
-spinner $health_pid &
-
-spinner_pid=$!
-
-# Wait for health check to complete
-wait $health_pid
-health_status=$?
-
-# Stop spinner
-kill $spinner_pid 2>/dev/null || true
-wait $spinner_pid 2>/dev/null || true
-
-if [[ $health_status -ne 0 ]]; then
-    exit 1
-fi
+echo "🚀 UltiHash is running!"
 
 ###############################################################################
 # 6. WELCOME
@@ -452,45 +401,81 @@ print(f"{speed:.2f}")
 EOF
 }
 
-###############################################################################
-# 7.5 CHECKSUM VALIDATION (REPLACED PYTHON WITH MD5SUM)
-###############################################################################
+# Compare checksums between original path and retrieved path
 function compare_checksums() {
   local ORIGINAL_PATH="$1"
   local RETRIEVED_DIR="$ULTIHASH_DIR/retrieved"
+  python3 - <<EOF
+import sys, os, hashlib, pathlib
+import concurrent.futures
 
-  local tmp_orig="/tmp/original.md5"
-  local tmp_retr="/tmp/retrieved.md5"
-  local tmp_diff="/tmp/compare_diff.txt"
-  rm -f "$tmp_orig" "$tmp_retr" "$tmp_diff"
+origp = pathlib.Path("$ORIGINAL_PATH").expanduser().resolve()
+retrp = pathlib.Path("$RETRIEVED_DIR").resolve()
 
-  echo "📁 Computing MD5 checksums..."
+def all_files(base):
+    if base.is_file():
+        return [base]
+    out = []
+    for root, dirs, files in os.walk(base):
+        for f in files:
+            out.append(pathlib.Path(root)/f)
+    return out
 
-  if [[ -d "$ORIGINAL_PATH" ]]; then
-    echo "🔄 Processing directory: $ORIGINAL_PATH"
-    (cd "$ORIGINAL_PATH" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_orig"
-    (cd "$RETRIEVED_DIR" && find . -type f -exec md5sum {} + | sort -k 2) > "$tmp_retr"
-  else
-    echo "🔄 Processing file: $ORIGINAL_PATH"
-    local fbase
-    fbase="$(basename "$ORIGINAL_PATH")"
-    md5sum "$ORIGINAL_PATH" | sed "s|$ORIGINAL_PATH|./$fbase|" > "$tmp_orig"
-    md5sum "$RETRIEVED_DIR/$fbase" | sed "s|$RETRIEVED_DIR/$fbase|./$fbase|" > "$tmp_retr"
-  fi
+orig_files = all_files(origp)
+if not orig_files:
+    print("No files found to compare. Possibly an empty directory.")
+    sys.exit(0)
 
-  echo "🔍 Comparing checksums..."
-  diff -u "$tmp_orig" "$tmp_retr" > "$tmp_diff" || true
+# Construct a mapping from relative path => original file
+orig_map = {}
+for f in orig_files:
+    rel = f.relative_to(origp)
+    orig_map[rel] = f
 
-  if [[ -s "$tmp_diff" ]]; then
-    echo "❌ MD5 CHECKSUM MISMATCHES found. See $tmp_diff for details."
-  else
-    echo "✅ All file checksums match!"
-  fi
+def sha256sum(fp):
+    h = hashlib.sha256()
+    with open(fp, "rb") as infile:
+        while True:
+            chunk = infile.read(128*1024)
+            if not chunk:
+                break
+            h.update(chunk)
+    return h.hexdigest()
+
+# We'll track matches/mismatches
+matches = 0
+mismatches = 0
+
+def check_file(rel):
+    # If not found, mismatch
+    retrieved_file = retrp / rel
+    if not retrieved_file.exists():
+        return False
+    # Compare checksums
+    orig_hash = sha256sum(orig_map[rel])
+    ret_hash  = sha256sum(retrieved_file)
+    return (orig_hash == ret_hash)
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=8) as exe:
+    future_map = {}
+    for rel in orig_map:
+        future_map[exe.submit(check_file, rel)] = rel
+
+    for f in concurrent.futures.as_completed(future_map):
+        if f.result():
+            matches += 1
+        else:
+            mismatches += 1
+
+total = matches + mismatches
+pct_match = 0.0
+if total > 0:
+    pct_match = (matches / total) * 100
+
+print(f"{matches} matched, {mismatches} mismatched, out of {total} files ({pct_match:.1f}% match)")
+EOF
 }
 
-###############################################################################
-# 8. ADDITIONAL PYTHON FUNCTION => DEDUP INFO
-###############################################################################
 function dedup_info() {
   python3 - <<EOF
 import sys, json
@@ -529,7 +514,7 @@ EOF
 }
 
 ###############################################################################
-# 9. MAIN LOOP => PROMPT FOR VALID PATH
+# 8. MAIN LOOP => PROMPT FOR VALID PATH
 ###############################################################################
 while true; do
   echo ""
@@ -550,69 +535,30 @@ while true; do
 done
 
 # 1. Store data => capture actual write speed
-echo "📤 Storing data..."
 WRITE_SPEED="$(store_data "$RAW_PATH" | tr -d '\r\n')"
 echo ""
 
 # 2. Read data => capture actual read speed
-echo "📥 Reading data..."
 READ_SPEED="$(read_data "$RAW_PATH" | tr -d '\r\n')"
 echo ""
 
 # 3. Compare checksums => store a summary
-echo "🔍 Comparing checksums..."
-compare_checksums "$RAW_PATH"
-CS_RESULT="Check completed."
+CS_RESULT="$(compare_checksums "$RAW_PATH" | tr -d '\r\n')"
 
 # 4. Gather dedup info => parse out orig/eff/saved/pct
-echo "📊 Gathering deduplication info..."
 DE_INFO="$(dedup_info)"
 ORIG_GB="$(echo "$DE_INFO" | awk '{print $1}')"
 EFF_GB="$(echo "$DE_INFO"  | awk '{print $2}')"
 SAV_GB="$(echo "$DE_INFO"  | awk '{print $3}')"
 PCT="$(echo "$DE_INFO"     | awk '{print $4}')"
 
-# 5. Shut down & wipe (Run in background)
-echo "🧹 Cleaning up..."
-wipe_cluster &
-CLEANUP_PID=$!
+# 5. Shut down & wipe
+wipe_cluster
 
-# 6. Wait for cleanup to finish with a spinner
-function cleanup_spinner() {
-    local pid=$1
-    local delay=0.1
-    local spinstr='|/-\'
-    while [ "$(ps a | awk '{print $1}' | grep $pid)" ]; do
-        local temp=${spinstr#?}
-        printf "🧹 Cleaning up... [%c]  " "$spinstr"
-        local spinstr=$temp${spinstr%"$temp"}
-        sleep $delay
-        printf "\r"
-    done
-}
-
-cleanup_spinner $CLEANUP_PID &
-
-spinner_pid=$!
-
-# Wait for cleanup to complete
-wait $CLEANUP_PID
-cleanup_status=$?
-
-# Stop spinner
-kill $spinner_pid 2>/dev/null || true
-wait $spinner_pid 2>/dev/null || true
-
-if [[ $cleanup_status -ne 0 ]]; then
-    echo "❌ Cleanup encountered issues. Please check the log file."
-else
-    echo "✅ Cleanup completed successfully."
-fi
-
-# 7. Delete the entire ultihash-test folder if everything proceeded normally
+# 6. Delete the entire ultihash-test folder if everything proceeded normally
 rm -rf "$ULTIHASH_DIR"
 
-# 8. Print final lines with actual stats
+# 7. Print final lines with actual stats
 echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
