@@ -517,7 +517,6 @@ EOF
 # 8. MAIN LOOP => PROMPT FOR VALID PATH
 ###############################################################################
 while true; do
-  echo ""
   echo -ne "${BOLD_TEAL}Paste the path of the directory you want to test:${RESET} "
   IFS= read -r RAW_PATH < /dev/tty
   echo ""
@@ -559,11 +558,10 @@ wipe_cluster
 rm -rf "$ULTIHASH_DIR"
 
 # 7. Print final lines with actual stats
-echo ""
 echo "➡️  WRITE THROUGHPUT: ${WRITE_SPEED} MB/s"
 echo "⬅️  READ THROUGHPUT:  ${READ_SPEED} MB/s"
 echo ""
-echo "🔎 CHECKSUM RESULTS: ${CS_RESULT}"
+# echo "🔎 CHECKSUM RESULTS: ${CS_RESULT}"
 echo ""
 echo "📦 ORIGINAL SIZE: ${ORIG_GB} GB"
 echo "✨ DEDUPLICATED SIZE: ${EFF_GB} GB"
