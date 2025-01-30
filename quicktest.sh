@@ -32,10 +32,10 @@ fi
 ###############################################################################
 # PRE-SUPPLIED CREDENTIALS / LICENSE
 ###############################################################################
-UH_REGISTRY_LOGIN="mem_cm6aqbgbz0qnr0tte56bne9aq"
-UH_REGISTRY_PASSWORD="G6R9242y4GCo1gRI"
+UH_REGISTRY_LOGIN="demo"
+UH_REGISTRY_PASSWORD="M_X!DFlE@jf1:Ztl"
 UH_LICENSE_STRING="mem_cm6aqbgbz0qnr0tte56bne9aq:10240:UCR67tj/EnGW1KXtyuU35fQsRrvuOC4bMEwR3uDJ0jk4VTb9qt2LPKTJULhtIfDlA3X6W8Mn/V168/rbIM7eAQ=="
-UH_MONITORING_TOKEN="7GcJLtaANgKP8GMX"
+UH_MONITORING_TOKEN="mQRQeeYoGVXHNE0i"
 UH_CLUSTER_ID=$(uuidgen)
 
 ###############################################################################
@@ -191,8 +191,8 @@ receivers:
 
 processors:
   batch:
-    send_batch_size: 100
-    timeout: 5s  
+    send_batch_size: 50
+    timeout: 2s  
   attributes/metrics:
     actions:
      - key: ultihash_cluster_id
@@ -256,7 +256,7 @@ services:
       UH_LICENSE: ${UH_LICENSE_STRING}
       UH_LOG_LEVEL: WARN
       UH_OTEL_ENDPOINT: http://collector:4317
-      UH_OTEL_INTERVAL: 3000
+      UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 storage"]
 
   deduplicator:
@@ -268,7 +268,7 @@ services:
       UH_LICENSE: ${UH_LICENSE_STRING}
       UH_LOG_LEVEL: WARN
       UH_OTEL_ENDPOINT: http://collector:4317
-      UH_OTEL_INTERVAL: 3000
+      UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 deduplicator"]
 
   entrypoint:
@@ -284,7 +284,7 @@ services:
       UH_DB_USER: postgres
       UH_DB_PASS: uh
       UH_OTEL_ENDPOINT: http://collector:4317
-      UH_OTEL_INTERVAL: 3000
+      UH_OTEL_INTERVAL: 1000
     volumes:
       - ./policies.json:/etc/uh/policies.json
     command: ["/usr/bin/bash", "-l", "-c", "sleep 15 && uh-cluster --registry etcd:2379 entrypoint"]
