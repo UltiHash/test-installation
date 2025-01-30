@@ -464,7 +464,6 @@ EOF
 ###############################################################################
 # 6. SINGLE RUN
 ###############################################################################
-echo ""
 echo -ne "${BOLD_TEAL}Paste the path of the directory you want to store:${RESET} "
 IFS= read -r RAW_PATH < /dev/tty
 
