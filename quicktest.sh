@@ -268,10 +268,14 @@ sleep 5
 ###############################################################################
 cat <<WELCOME
 
-Welcome to the UltiHash test installation! Here you can store real data
-to see UltiHash's deduplication and speed. Different datasets will have different results.
+👋 Hi! Welcome to the UltiHash test installation.
 
-If you'd like sample datasets, head to https://ultihash.io/test-data in your own browser.
+Here you can store real data to see UltiHash's deduplication and speed.
+
+Deduplication can have significantly different results depending on the dataset.
+For best results, try datasets likely to contain repeated data.
+
+You can download benchmark datasets at https://ultihash.io/benchmarks.
 
 WELCOME
 
