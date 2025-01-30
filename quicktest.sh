@@ -268,7 +268,6 @@ sleep 5
 ###############################################################################
 cat <<WELCOME
 
-
 Welcome to the UltiHash test installation! Here you can store real data
 to see UltiHash's deduplication and speed. Different datasets will have different results.
 
