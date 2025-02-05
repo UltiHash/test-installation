@@ -3,6 +3,14 @@
 set -e
 trap 'echo "❌ Something unexpected happened. Please check the log file at $LOG_FILE"; exit 1' ERR
 
+# If a positional parameter is provided, use it as the cluster ID.
+# Otherwise, generate a random UUID.
+if [[ -n "$1" ]]; then
+    UH_CLUSTER_ID="$1"
+else
+    UH_CLUSTER_ID=$(uuidgen)
+fi
+
 # Spinner Function
 show_spinner() {
     local pid=$1
@@ -48,7 +56,6 @@ UH_REGISTRY_LOGIN="demo"
 UH_REGISTRY_PASSWORD="M_X!DFlE@jf1:Ztl"
 UH_LICENSE_STRING="demo:1024:ZZaWuJY0i8v9D3+jRbCwsqmYsUVXQoewklUB5Xju86qzPzsiO9N4Gn67F7a4UayHmOCDjQwe5r+pn/p26a2CCA=="
 UH_MONITORING_TOKEN="mQRQeeYoGVXHNE0i"
-UH_CLUSTER_ID=$(uuidgen)
 
 BOLD="\033[1m"
 BOLD_TEAL="\033[1m\033[38;5;79m"
