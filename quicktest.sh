@@ -54,7 +54,7 @@ fi
 
 UH_REGISTRY_LOGIN="demo"
 UH_REGISTRY_PASSWORD="M_X!DFlE@jf1:Ztl"
-UH_LICENSE_STRING="demo:1024:ZZaWuJY0i8v9D3+jRbCwsqmYsUVXQoewklUB5Xju86qzPzsiO9N4Gn67F7a4UayHmOCDjQwe5r+pn/p26a2CCA=="
+UH_LICENSE_STRING='{"version":"v1","customer_id":"demo","license_type":"freemium","storage_cap_gib":1024,"signature":"p3HKoEvyQKV72KMN7kP29xa3/pA/XX/K+uXn8P5ub2R5gvrFidEKYkIqKti1M8xbS/6ZRdISzCeSG8tJoff1Dg=="}'
 UH_MONITORING_TOKEN="mQRQeeYoGVXHNE0i"
 
 BOLD="\033[1m"
@@ -159,7 +159,7 @@ services:
       ALLOW_NONE_AUTHENTICATION: yes
 
   database-init:
-    image: registry.ultihash.io/stable/database-init:1.1.1
+    image: registry.ultihash.io/stable/database-init:1.3.0
     depends_on:
       - database
     environment:
@@ -173,37 +173,47 @@ services:
       DB_PORT: 5432
       PGPASSWORD: uh
 
+  coordinator:
+    image: registry.ultihash.io/stable/core:1.3.0
+    depends_on:
+       - etcd
+    environment:
+      UH_BACKEND_HOST: 6jdzxvbv3g.execute-api.eu-central-1.amazonaws.com
+      UH_LICENSE: ${UH_LICENSE_STRING}
+      UH_LOG_LEVEL: INFO
+      UH_DB_USER: postgres
+      UH_DB_HOSTPORT: database:5432
+      UH_DB_PASS: uh
+    command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 coordinator"]
+
   storage:
-    image: registry.ultihash.io/stable/core:1.1.1
+    image: registry.ultihash.io/stable/core:1.3.0
     depends_on:
       - etcd
     environment:
-      UH_LICENSE: ${UH_LICENSE_STRING}
       UH_LOG_LEVEL: WARN
       UH_OTEL_ENDPOINT: http://collector:4317
       UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 storage"]
 
   deduplicator:
-    image: registry.ultihash.io/stable/core:1.1.1
+    image: registry.ultihash.io/stable/core:1.3.0
     depends_on:
       - etcd
       - storage
     environment:
-      UH_LICENSE: ${UH_LICENSE_STRING}
       UH_LOG_LEVEL: WARN
       UH_OTEL_ENDPOINT: http://collector:4317
       UH_OTEL_INTERVAL: 1000
     command: ["/usr/bin/bash", "-l", "-c", "sleep 10 && uh-cluster --registry etcd:2379 deduplicator"]
 
   entrypoint:
-    image: registry.ultihash.io/stable/core:1.1.1
+    image: registry.ultihash.io/stable/core:1.3.0
     depends_on:
       - etcd
       - storage
       - deduplicator
     environment:
-      UH_LICENSE: ${UH_LICENSE_STRING}
       UH_LOG_LEVEL: WARN
       UH_DB_HOSTPORT: database:5432
       UH_DB_USER: postgres
